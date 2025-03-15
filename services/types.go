@@ -275,11 +275,11 @@ type RugbyDBTeam struct {
 
 // TeamNameMapping maps RugbyDB team names to standardized team names
 var TeamNameMapping = map[string]string{
-	"New Zealand":  "All Blacks",
-	"South Africa": "Springboks",
-	"Australia":    "Wallabies",
-	"France":       "Les Bleus",
-	"New ZealandW": "Black Ferns W",
+	"New Zealand":   "All Blacks",
+	"South Africa":  "Springboks",
+	"Australia":     "Wallabies",
+	"France":        "Les Bleus",
+	"New Zealand W": "Black Ferns (W)",
 }
 
 // TeamNameNormalizer removes common suffixes and standardizes team names
