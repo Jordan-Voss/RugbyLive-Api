@@ -116,7 +116,7 @@ func wordMatch(name1, name2 string) float64 {
 	return float64(matches) / totalWords
 }
 
-func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
+func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]RugbyDBTeam, error) {
 	url := "https://www.rugbydatabase.co.nz/teams.php"
 	var matchedTeams []RugbyDBTeam
 	var unmatchedTeams []string
@@ -126,7 +126,13 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
 	}
 	var matches []Match
 	matchCount := 0
-	maxMatches := 20 // Only process first 10 matched teams
+	maxMatches := 20
+
+	// Create map of priority teams for quick lookup
+	priorityMap := make(map[string]bool)
+	for _, name := range priorityTeams {
+		priorityMap[name] = true
+	}
 
 	done := make(chan bool)
 
@@ -184,7 +190,9 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
 			// fmt.Printf("\nProcessing country: %s\n", currentCountry)
 		} else {
 			name := s.Find(".playerLink a").Text()
-			// fmt.Printf("Found team: %s\n", name)
+			// If this is a priority team, ensure we process it
+			isPriority := priorityMap[name]
+
 			// Get the full image URL
 			logoURL := ""
 			if imgSrc, exists := s.Find(".img img").Attr("src"); exists {
@@ -316,7 +324,20 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
 					return
 				}
 			} else {
-				// fmt.Printf("\n=== Detailed matching attempt for %s ===\n", team.Name)
+				// If this was a priority team, create it
+				if isPriority {
+					if newTeam, err := a.createTeamFromRugbyDB(store, team); err == nil {
+						team.InternalID = newTeam.ID
+						matchedTeams = append(matchedTeams, team)
+						matches = append(matches, Match{
+							RugbyDBTeam: team,
+							OurTeam:     newTeam,
+						})
+						fmt.Printf("Created new team for priority match: %s\n", team.Name)
+					} else {
+						fmt.Printf("Failed to create priority team %s: %v\n", team.Name, err)
+					}
+				}
 				unmatchedTeams = append(unmatchedTeams, fmt.Sprintf("%s (%s)", name, currentCountry))
 			}
 		}
@@ -349,10 +370,17 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
 		}
 		defer f.Close()
 
-		fmt.Fprintf(f, "Unmatched teams (%d):\n", len(unmatchedTeams))
-		for _, team := range unmatchedTeams {
-			fmt.Fprintf(f, "- %s\n", team)
+		// Write as JSON-ready format
+		fmt.Fprintf(f, "{\n  \"names\": [\n")
+		for i, team := range unmatchedTeams {
+			name := strings.Split(team, " (")[0] // Remove country part
+			if i == len(unmatchedTeams)-1 {
+				fmt.Fprintf(f, "    \"%s\"\n", name)
+			} else {
+				fmt.Fprintf(f, "    \"%s\",\n", name)
+			}
 		}
+		fmt.Fprintf(f, "  ]\n}")
 
 		fmt.Printf("\nUnmatched teams written to: %s\n", filename)
 	}
@@ -458,4 +486,60 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 	}
 
 	return nil, fmt.Errorf("no matching team found for %s (%s)", rugbyDBTeam.Name, rugbyDBTeam.Country)
+}
+
+func (a *APIClient) createTeamFromRugbyDB(store *db.Store, rugbyDBTeam RugbyDBTeam) (*models.Team, error) {
+	// First ensure country exists
+	country, err := store.GetCountryByName(rugbyDBTeam.Country)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get country: %v", err)
+	}
+
+	// Create internal ID
+	internalID := fmt.Sprintf("%s-%s",
+		country.Code,
+		strings.ToUpper(strings.ReplaceAll(rugbyDBTeam.Name, " ", "")),
+	)
+
+	// Create new team
+	newTeam := &models.Team{
+		ID:      internalID,
+		Name:    rugbyDBTeam.Name,
+		Country: *country,
+	}
+
+	// Upload logo if exists
+	if rugbyDBTeam.LogoURL != "" {
+		destPath := fmt.Sprintf("logos/teams/%s/%s/%s.png",
+			country.Code,
+			strings.TrimPrefix(internalID, country.Code+"-"),
+			rugbyDBTeam.Name,
+		)
+		if uploadedURL, err := a.downloadAndStoreImage(rugbyDBTeam.LogoURL, destPath); err == nil {
+			newTeam.LogoURL = uploadedURL
+			newTeam.LogoSource = "rugbydatabase"
+		}
+	}
+
+	// Save team to database
+	if err := store.UpsertTeam(newTeam); err != nil {
+		return nil, fmt.Errorf("failed to create team: %v", err)
+	}
+
+	// Create API mapping
+	mapping := &models.APIMapping{
+		EntityID:   newTeam.ID,
+		APIName:    "rugbydatabase",
+		APIID:      rugbyDBTeam.TeamID,
+		EntityType: "team",
+	}
+	if err := store.UpsertAPIMapping(mapping); err != nil {
+		fmt.Printf("Warning: failed to create API mapping for team %s: %v\n", newTeam.Name, err)
+	}
+
+	return newTeam, nil
+}
+
+type TeamCreateRequest struct {
+	Names []string `json:"names"`
 }

@@ -234,10 +234,40 @@ func (h *Handler) SearchWikidataTeams(c *gin.Context) {
 }
 
 func (h *Handler) GetRugbyDBTeams(c *gin.Context) {
-	teams, err := h.apiClient.GetRugbyDBTeams(h.store)
+	var priorityTeams []string
+
+	// Handle both GET and POST methods
+	if c.Request.Method == "POST" {
+		var req services.TeamCreateRequest
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid request: %v", err)})
+			return
+		}
+		priorityTeams = req.Names
+	} else {
+		priorityTeams = c.QueryArray("teams")
+	}
+
+	teams, err := h.apiClient.GetRugbyDBTeams(h.store, priorityTeams)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch teams: %v", err)})
 		return
 	}
+	c.JSON(http.StatusOK, teams)
+}
+
+func (h *Handler) CreateRugbyDBTeams(c *gin.Context) {
+	var req services.TeamCreateRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid request: %v", err)})
+		return
+	}
+
+	teams, err := h.apiClient.GetRugbyDBTeams(h.store, req.Names)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to process teams: %v", err)})
+		return
+	}
+
 	c.JSON(http.StatusOK, teams)
 }

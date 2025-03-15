@@ -55,7 +55,7 @@ func main() {
 	router.GET("/espn/leagues", h.GetESPNLeagues)
 	router.GET("/wikidata/teams", h.GetWikidataTeams)
 	router.GET("/wikidata/teams/search", h.SearchWikidataTeams)
-	router.GET("/rugbydb/teams", h.GetRugbyDBTeams)
+	router.POST("/rugbydb/teams", h.GetRugbyDBTeams)
 
 	// Start server
 	router.Run(":8080")

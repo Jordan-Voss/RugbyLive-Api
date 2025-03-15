@@ -580,3 +580,16 @@ func (s *Store) GetTeamsByCountryCode(countryCode string) ([]*models.Team, error
 	}
 	return teams, nil
 }
+
+func (s *Store) GetCountryByName(name string) (*models.Country, error) {
+	var country models.Country
+	err := s.DB.QueryRow("SELECT code, name, flag FROM countries WHERE name = $1", name).Scan(
+		&country.Code,
+		&country.Name,
+		&country.Flag,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &country, nil
+}
