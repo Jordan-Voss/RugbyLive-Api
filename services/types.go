@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -284,23 +285,18 @@ var TeamNameMapping = map[string]string{
 
 // TeamNameNormalizer removes common suffixes and standardizes team names
 func TeamNameNormalizer(name string) string {
+	if strings.Contains(name, "Blues") {
+		fmt.Printf("Normalizing Blues team: %s\n", name)
+	}
+
 	// First check if we have a direct mapping
 	if standardName, exists := TeamNameMapping[name]; exists {
+		if strings.Contains(name, "Blues") {
+			fmt.Printf("Found mapping for %s -> %s\n", name, standardName)
+		}
 		return standardName
 	}
 
-	// Remove common suffixes
-	suffixes := []string{
-		" Rugby",
-		" RFC",
-		" Union",
-		" XV",
-	}
-
-	normalized := name
-	for _, suffix := range suffixes {
-		normalized = strings.TrimSuffix(normalized, suffix)
-	}
-
-	return normalized
+	// Return name as-is if no mapping exists
+	return name
 }

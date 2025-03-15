@@ -14,14 +14,14 @@ import (
 )
 
 var teamSuffixes = []string{
+	" Women (W)",
+	" Women",
+	" W",
+	" (W)",
 	" A",
 	" B",
 	" C",
 	" XV",
-	" Women",
-	" W",
-	" (W)",
-	" Women (W)",
 }
 
 var oppositeWords = map[string]string{
@@ -47,6 +47,7 @@ func hasDifferentSuffix(name1, name2 string) bool {
 	// Special case: if one name ends with " (W)" and the other contains "Women"
 	if (strings.HasSuffix(name1, " (W)") && strings.Contains(name2, "Women")) ||
 		(strings.HasSuffix(name2, " (W)") && strings.Contains(name1, "Women")) {
+		fmt.Printf("- Special case match for Women/(W)\n")
 		return false
 	}
 
@@ -64,19 +65,23 @@ func hasDifferentSuffix(name1, name2 string) bool {
 
 	// Check if suffixes are equivalent
 	if name1Suffix != "" && name2Suffix != "" {
+		// fmt.Printf("- Checking if suffixes '%s' and '%s' are equivalent\n", name1Suffix, name2Suffix)
 		if name1Suffix == name2Suffix {
+			// fmt.Printf("- Exact suffix match\n")
 			return false
 		}
 		if equivalents, exists := equivalentSuffixes[name1Suffix]; exists {
+			// fmt.Printf("- Found equivalents for '%s': %v\n", name1Suffix, equivalents)
 			for _, equiv := range equivalents {
 				if name2Suffix == equiv {
+					// fmt.Printf("- Found equivalent suffix match\n")
 					return false
 				}
 			}
 		}
 	}
 
-	// If both have suffixes, they must match
+	// fmt.Printf("- Result: Different suffixes\n")
 	return (name1Suffix != "" || name2Suffix != "") && name1Suffix != name2Suffix
 }
 
@@ -356,7 +361,11 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
 }
 
 func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (*models.Team, error) {
-	// fmt.Printf("\nAttempting to match: %s from %s\n", rugbyDBTeam.Name, rugbyDBTeam.Country)
+	// Debug for Chiefs Women specifically
+	if strings.Contains(rugbyDBTeam.Name, "Chiefs") || strings.Contains(rugbyDBTeam.Name, "Manawa") {
+		fmt.Printf("\n=== Debug Chiefs Women ===\n")
+		fmt.Printf("Looking for match for: %s\n", rugbyDBTeam.Name)
+	}
 
 	teams, err := store.GetAllTeams()
 	if err != nil {
@@ -373,16 +382,33 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 			countryTeams = append(countryTeams, team)
 		}
 	}
-	// fmt.Printf("Found %d teams from %s\n", len(countryTeams), rugbyDBTeam.Country)
-
-	// Normalize the RugbyDB team name
-	normalizedName := TeamNameNormalizer(rugbyDBTeam.Name)
-	// fmt.Printf("- Normalized name: %s\n", normalizedName)
 
 	// First try exact match with country
 	for _, team := range countryTeams {
+		if strings.Contains(rugbyDBTeam.Name, "Chiefs") {
+			fmt.Printf("Checking team: %s\n", team.Name)
+			fmt.Printf("Checking suffixes for '%s' and '%s'\n", rugbyDBTeam.Name, team.Name)
+		}
+
+		// Skip if suffixes don't match
+		if hasDifferentSuffix(rugbyDBTeam.Name, team.Name) {
+			if strings.Contains(rugbyDBTeam.Name, "Chiefs") {
+				fmt.Printf("Suffixes don't match\n")
+			}
+			continue
+		}
+
+		// Standardize women's team names for comparison only
+		compareTeamName := team.Name
+		compareRugbyDBName := rugbyDBTeam.Name
+		if strings.HasSuffix(compareTeamName, " Women") || strings.HasSuffix(compareTeamName, " (W)") {
+			compareTeamName = strings.TrimSuffix(strings.TrimSuffix(compareTeamName, " Women"), " (W)") + " W"
+		}
+		if strings.HasSuffix(compareRugbyDBName, " Women") || strings.HasSuffix(compareRugbyDBName, " (W)") {
+			compareRugbyDBName = strings.TrimSuffix(strings.TrimSuffix(compareRugbyDBName, " Women"), " (W)") + " W"
+		}
+
 		// First check if this team maps to the RugbyDB name
-		fmt.Printf("Checking if %s maps to %s\n", team.Name, rugbyDBTeam.Name)
 		if nickname := TeamNameMapping[team.Name]; nickname == rugbyDBTeam.Name {
 			fmt.Printf("Found nickname match: %s -> %s\n", team.Name, nickname)
 			return team, nil
@@ -392,12 +418,7 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 		if hasOppositeDirections(rugbyDBTeam.Name, team.Name) {
 			continue
 		}
-		// Skip if suffixes don't match
-		if hasDifferentSuffix(rugbyDBTeam.Name, team.Name) {
-			// fmt.Printf("  - Skipped: different suffixes\n")
-			continue
-		}
-		if TeamNameNormalizer(team.Name) == normalizedName {
+		if strings.EqualFold(compareTeamName, compareRugbyDBName) {
 			fmt.Printf("Found exact match: %s\n", team.ID)
 			// Check if our team name maps to the RugbyDB team name
 			fmt.Printf("Adding alternate name %s for team %s\n", rugbyDBTeam.Name, team.Name)
