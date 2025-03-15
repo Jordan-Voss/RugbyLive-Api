@@ -34,6 +34,13 @@ var oppositeWords = map[string]string{
 	"west":     "east",
 }
 
+// equivalentSuffixes groups suffixes that should be treated as the same
+var equivalentSuffixes = map[string][]string{
+	" W":     {" Women", " (W)"},
+	" Women": {" W", " (W)"},
+	" (W)":   {" W", " Women"},
+}
+
 func hasDifferentSuffix(name1, name2 string) bool {
 	name1Suffix := ""
 	name2Suffix := ""
@@ -47,10 +54,18 @@ func hasDifferentSuffix(name1, name2 string) bool {
 		}
 	}
 
-	// Treat " W" and " (W)" as the same suffix
-	if (name1Suffix == " W" && name2Suffix == " (W)") ||
-		(name1Suffix == " (W)" && name2Suffix == " W") {
-		return false
+	// Check if suffixes are equivalent
+	if name1Suffix != "" && name2Suffix != "" {
+		if name1Suffix == name2Suffix {
+			return false
+		}
+		if equivalents, exists := equivalentSuffixes[name1Suffix]; exists {
+			for _, equiv := range equivalents {
+				if name2Suffix == equiv {
+					return false
+				}
+			}
+		}
 	}
 
 	// If both have suffixes, they must match
@@ -358,12 +373,14 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 
 	// First try exact match with country
 	for _, team := range countryTeams {
-		// fmt.Printf("- Checking against: %s (Country: %s)\n", team.Name, team.Country.Name)
-		// fmt.Printf("  - Normalized DB name: %s\n", TeamNameNormalizer(team.Name))
+		// First check if this team maps to the RugbyDB name
+		if nickname := TeamNameMapping[team.Name]; nickname == rugbyDBTeam.Name {
+			fmt.Printf("Found nickname match: %s -> %s\n", team.Name, nickname)
+			return team, nil
+		}
 
 		// Skip if directions are opposite
 		if hasOppositeDirections(rugbyDBTeam.Name, team.Name) {
-			// fmt.Printf("  - Skipped: opposite directions\n")
 			continue
 		}
 		// Skip if suffixes don't match

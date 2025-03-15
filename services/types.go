@@ -279,6 +279,7 @@ var TeamNameMapping = map[string]string{
 	"South Africa": "Springboks",
 	"Australia":    "Wallabies",
 	"France":       "Les Bleus",
+	"New ZealandW": "Black Ferns W",
 }
 
 // TeamNameNormalizer removes common suffixes and standardizes team names
