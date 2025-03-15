@@ -126,7 +126,7 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store) ([]RugbyDBTeam, error) {
 	}
 	var matches []Match
 	matchCount := 0
-	maxMatches := 10 // Only process first 10 matched teams
+	maxMatches := 20 // Only process first 10 matched teams
 
 	done := make(chan bool)
 
@@ -401,11 +401,29 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 		// Standardize women's team names for comparison only
 		compareTeamName := team.Name
 		compareRugbyDBName := rugbyDBTeam.Name
-		if strings.HasSuffix(compareTeamName, " Women") || strings.HasSuffix(compareTeamName, " (W)") {
-			compareTeamName = strings.TrimSuffix(strings.TrimSuffix(compareTeamName, " Women"), " (W)") + " W"
+		if strings.Contains(team.Name, "Blues") || strings.Contains(rugbyDBTeam.Name, "Blues") {
+			fmt.Printf("\n=== Debug Name Standardization ===\n")
+			fmt.Printf("Original DB name: %s\n", team.Name)
+			fmt.Printf("Original RugbyDB name: %s\n", rugbyDBTeam.Name)
 		}
-		if strings.HasSuffix(compareRugbyDBName, " Women") || strings.HasSuffix(compareRugbyDBName, " (W)") {
-			compareRugbyDBName = strings.TrimSuffix(strings.TrimSuffix(compareRugbyDBName, " Women"), " (W)") + " W"
+		// Standardize to single " W" suffix for comparison
+		for _, suffix := range []string{" Women (W)", " (W)", " Women"} {
+			if strings.HasSuffix(compareTeamName, suffix) {
+				compareTeamName = strings.TrimSuffix(compareTeamName, suffix) + " W"
+				if strings.Contains(team.Name, "Blues") {
+					fmt.Printf("Standardized DB name: %s\n", compareTeamName)
+				}
+				break // Only replace one suffix
+			}
+		}
+		for _, suffix := range []string{" Women (W)", " (W)", " Women"} {
+			if strings.HasSuffix(compareRugbyDBName, suffix) {
+				compareRugbyDBName = strings.TrimSuffix(compareRugbyDBName, suffix) + " W"
+				if strings.Contains(rugbyDBTeam.Name, "Blues") {
+					fmt.Printf("Standardized RugbyDB name: %s\n", compareRugbyDBName)
+				}
+				break // Only replace one suffix
+			}
 		}
 
 		// First check if this team maps to the RugbyDB name
