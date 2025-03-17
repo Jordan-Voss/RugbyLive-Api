@@ -74,19 +74,19 @@ func (a *APIClient) standardizeAPISportsData(resp models.APISportsTodaysMatchesR
 				),
 				".", "",
 			))),
-			Name: game.League.Name,
-			Type: game.League.Type,
-			Logo: game.League.Logo,
+			Name:    game.League.Name,
+			Format:  game.League.Type,
+			LogoURL: game.League.Logo,
 			Country: models.Country{
 				Code: game.Country.Code,
 				Name: game.Country.Name,
 				Flag: game.Country.Flag,
 			},
 			Seasons: []models.Season{{
-				Year:    game.League.Season,
-				Current: true,
-				Start:   time.Now(),
-				End:     time.Now().AddDate(0, 6, 0),
+				Year:      game.League.Season,
+				Current:   true,
+				StartDate: time.Now(),
+				EndDate:   time.Now().AddDate(0, 6, 0),
 			}},
 		}
 
@@ -328,7 +328,7 @@ func (a *APIClient) FetchAndStoreLeagues(store *db.Store, updateImages bool) ([]
 			}
 
 			logoURL := l.Logo
-			if existing == nil || (updateImages && existing.LogoSource == "api_sports" && existing.Logo != l.Logo) {
+			if existing == nil || (updateImages && existing.LogoSource == "api_sports" && existing.LogoURL != l.Logo) {
 				// Clean the league name for the filename
 				cleanName := strings.ToLower(strings.ReplaceAll(
 					strings.ReplaceAll(
@@ -344,7 +344,7 @@ func (a *APIClient) FetchAndStoreLeagues(store *db.Store, updateImages bool) ([]
 				} else {
 					logoURL = newLogoURL
 					if existing != nil {
-						change.Changes["logo"] = map[string]string{"old": existing.Logo, "new": logoURL}
+						change.Changes["logo"] = map[string]string{"old": existing.LogoURL, "new": logoURL}
 					}
 				}
 			}
@@ -355,18 +355,18 @@ func (a *APIClient) FetchAndStoreLeagues(store *db.Store, updateImages bool) ([]
 				start, _ := time.Parse("2006-01-02", s.Start)
 				end, _ := time.Parse("2006-01-02", s.End)
 				seasons = append(seasons, models.Season{
-					Year:    s.Year,
-					Current: s.Current,
-					Start:   start,
-					End:     end,
+					Year:      s.Year,
+					Current:   s.Current,
+					StartDate: start,
+					EndDate:   end,
 				})
 			}
 
 			league := &models.League{
 				ID:         change.ID,
 				Name:       l.Name,
-				Type:       l.Type,
-				Logo:       logoURL,
+				Format:     l.Type,
+				LogoURL:    logoURL,
 				LogoSource: "api_sports",
 				Country:    *country,
 				Seasons:    seasons,
@@ -399,8 +399,8 @@ func (a *APIClient) FetchAndStoreLeagues(store *db.Store, updateImages bool) ([]
 				if existing.Name != league.Name {
 					change.Changes["name"] = map[string]string{"old": existing.Name, "new": league.Name}
 				}
-				if existing.Type != league.Type {
-					change.Changes["type"] = map[string]string{"old": existing.Type, "new": league.Type}
+				if existing.Format != league.Format {
+					change.Changes["type"] = map[string]string{"old": existing.Format, "new": league.Format}
 				}
 			}
 

@@ -9,52 +9,23 @@ import (
 
 	"rugby-live-api/db"
 	"rugby-live-api/models"
+	"rugby-live-api/services/rugbydb"
 
 	"github.com/PuerkitoBio/goquery"
 )
-
-var teamSuffixes = []string{
-	" Women (W)",
-	" Women",
-	" W",
-	" (W)",
-	" A",
-	" B",
-	" C",
-	" XV",
-}
-
-var oppositeWords = map[string]string{
-	"northern": "southern",
-	"southern": "northern",
-	"eastern":  "western",
-	"western":  "eastern",
-	"north":    "south",
-	"south":    "north",
-	"east":     "west",
-	"west":     "east",
-}
-
-// equivalentSuffixes groups suffixes that should be treated as the same
-var equivalentSuffixes = map[string][]string{
-	" W":         {" Women", " (W)", " Women (W)"},
-	" Women":     {" W", " (W)", " Women (W)"},
-	" (W)":       {" W", " Women", " Women (W)"},
-	" Women (W)": {" W", " Women", " (W)"},
-}
 
 func hasDifferentSuffix(name1, name2 string) bool {
 	// Special case: if one name ends with " (W)" and the other contains "Women"
 	if (strings.HasSuffix(name1, " (W)") && strings.Contains(name2, "Women")) ||
 		(strings.HasSuffix(name2, " (W)") && strings.Contains(name1, "Women")) {
-		fmt.Printf("- Special case match for Women/(W)\n")
+		// fmt.Printf("- Special case match for Women/(W)\n")
 		return false
 	}
 
 	name1Suffix := ""
 	name2Suffix := ""
 
-	for _, suffix := range teamSuffixes {
+	for _, suffix := range rugbydb.TeamSuffixes {
 		if strings.HasSuffix(name1, suffix) {
 			name1Suffix = suffix
 		}
@@ -70,7 +41,7 @@ func hasDifferentSuffix(name1, name2 string) bool {
 			// fmt.Printf("- Exact suffix match\n")
 			return false
 		}
-		if equivalents, exists := equivalentSuffixes[name1Suffix]; exists {
+		if equivalents, exists := rugbydb.EquivalentSuffixes[name1Suffix]; exists {
 			// fmt.Printf("- Found equivalents for '%s': %v\n", name1Suffix, equivalents)
 			for _, equiv := range equivalents {
 				if name2Suffix == equiv {
@@ -89,7 +60,7 @@ func hasOppositeDirections(name1, name2 string) bool {
 	name1Lower := strings.ToLower(name1)
 	name2Lower := strings.ToLower(name2)
 
-	for word, opposite := range oppositeWords {
+	for word, opposite := range rugbydb.OppositeWords {
 		if strings.Contains(name1Lower, word) && strings.Contains(name2Lower, opposite) {
 			return true
 		}
@@ -116,7 +87,40 @@ func wordMatch(name1, name2 string) float64 {
 	return float64(matches) / totalWords
 }
 
-func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]RugbyDBTeam, error) {
+func normalizeCountryName(name string) string {
+	// Map of special cases
+	countryMap := map[string]string{
+		"the fiji islands":              "Fiji",
+		"fiji islands":                  "Fiji",
+		"fiji the fiji islands":         "Fiji",
+		"France, French Republic":       "France",
+		"france, french republic":       "France",
+		"united kingdom":                "Europe", // For British & Irish Lions
+		"netherlands the":               "Netherlands",
+		"portugal, portuguese republic": "Portugal",
+		"Portugal Portuguese Republic":  "Portugal",
+		"Russian Federation":            "Russia",
+		"russia":                        "Russia",
+		"russian federation":            "Russia",
+		"United States of America":      "USA",
+		"united states of america":      "USA",
+	}
+
+	// Just trim spaces but preserve case
+	normalized := strings.TrimSpace(name)
+	// fmt.Printf("Normalizing country name: '%s' -> ", name)
+
+	// Check special cases
+	if normalized, exists := countryMap[strings.ToLower(normalized)]; exists {
+		// fmt.Printf("'%s' (special case)\n", normalized)
+		return normalized
+	}
+
+	// fmt.Printf("'%s' (default)\n", normalized)
+	return normalized
+}
+
+func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string, countryFilter string) ([]RugbyDBTeam, error) {
 	url := "https://www.rugbydatabase.co.nz/teams.php"
 	var matchedTeams []RugbyDBTeam
 	var unmatchedTeams []string
@@ -125,8 +129,6 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 		OurTeam     *models.Team // Our internal team that matches
 	}
 	var matches []Match
-	matchCount := 0
-	maxMatches := 20
 
 	// Create map of priority teams for quick lookup
 	priorityMap := make(map[string]bool)
@@ -152,9 +154,6 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 		}
 		existingTeamMappings[mapping.APIID] = mapping.EntityID
 	}
-
-	fmt.Printf("\nFound %d existing rugbydatabase team mappings\n", len(existingTeamMappings))
-	fmt.Printf("Mappings: %+v\n", existingTeamMappings)
 
 	fmt.Printf("\nFetching teams from RugbyDB...\n")
 
@@ -187,8 +186,15 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 
 		if s.Is("h3") {
 			currentCountry = s.Text()
-			// fmt.Printf("\nProcessing country: %s\n", currentCountry)
+			// Skip if we're filtering by country and this isn't the one we want
+			if countryFilter != "" && normalizeCountryName(currentCountry) != normalizeCountryName(countryFilter) {
+				return
+			}
 		} else {
+			// Skip if we're not in the desired country
+			if countryFilter != "" && normalizeCountryName(currentCountry) != normalizeCountryName(countryFilter) {
+				return
+			}
 			name := s.Find(".playerLink a").Text()
 			// If this is a priority team, ensure we process it
 			isPriority := priorityMap[name]
@@ -215,19 +221,21 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 
 			// Create a URL-friendly ID
 			id := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
-
+			normalizedName := normalizeCountryName(currentCountry)
 			team := RugbyDBTeam{
 				ID:      id,
 				TeamID:  teamID,
 				Name:    name,
-				Country: currentCountry,
+				Country: normalizedName,
 				LogoURL: logoURL,
 			}
 			rugbyDBTeams = append(rugbyDBTeams, team)
+			// fmt.Printf("Mappings: %+v\n", rugbyDBTeams)
 
 			// First check if we already have an API mapping
 			mapping, _ := store.GetAPIMappingByAPIID("rugbydatabase", team.TeamID, "team")
 			if mapping != nil {
+				// fmt.Printf("Found mapping for %s\n", team.Name)
 				matchingTeam, _ := store.GetTeamByID(mapping.EntityID)
 				if matchingTeam != nil {
 					team.InternalID = matchingTeam.ID
@@ -236,11 +244,6 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 						RugbyDBTeam: team,
 						OurTeam:     matchingTeam,
 					})
-					matchCount++
-					if matchCount >= maxMatches {
-						close(done)
-						return
-					}
 					return
 				}
 			}
@@ -275,14 +278,12 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 				}
 
 				if !strings.HasSuffix(team.LogoURL, "TeamImage.webp") {
-					fmt.Printf("\nProcessing logo for %s:\n", team.Name)
-					fmt.Printf("- Source URL: %s\n", team.LogoURL)
 					destPath := fmt.Sprintf("logos/teams/%s/%s/%s.png",
 						matchingTeam.Country.Code,
 						strings.TrimPrefix(matchingTeam.ID, matchingTeam.Country.Code+"-"),
 						matchingTeam.Name,
 					)
-					fmt.Printf("- Destination: %s\n", destPath)
+
 					// Check if file already exists
 					if _, err := os.Stat(destPath); os.IsNotExist(err) {
 						// Download and store the image
@@ -293,7 +294,7 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 							matchingTeam.LogoSource = "rugbydatabase"
 							needsUpdate = true
 						} else {
-							fmt.Printf("- Failed to upload: %v\n", err)
+							// fmt.Printf("- Failed to upload: %v\n", err)
 						}
 					} else {
 						fmt.Printf("- Image already exists at %s\n", destPath)
@@ -318,15 +319,13 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 					fmt.Printf("Error creating API mapping for team %s: %v\n", team.Name, err)
 				}
 
-				matchCount++
-				if matchCount >= maxMatches {
-					close(done)
-					return
-				}
+				return
 			} else {
 				// If this was a priority team, create it
 				if isPriority {
-					if newTeam, err := a.createTeamFromRugbyDB(store, team); err == nil {
+					// Create team regardless of logo
+					newTeam, err := a.createTeamFromRugbyDB(store, team)
+					if err == nil {
 						team.InternalID = newTeam.ID
 						matchedTeams = append(matchedTeams, team)
 						matches = append(matches, Match{
@@ -360,8 +359,8 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 	fmt.Printf("\nTotal Matches: %d\n", len(matches))
 
 	if len(unmatchedTeams) > 0 {
-		// Create filename with timestamp
-		filename := fmt.Sprintf("unmatched_teams_%s.txt", time.Now().Format("2006-01-02_15-04-05"))
+		// Use fixed filename
+		filename := "unmatched_teams.txt"
 
 		// Create and write to file
 		f, err := os.Create(filename)
@@ -373,7 +372,12 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 		// Write as JSON-ready format
 		fmt.Fprintf(f, "{\n  \"names\": [\n")
 		for i, team := range unmatchedTeams {
+			// Extract name but preserve W suffix
 			name := strings.Split(team, " (")[0] // Remove country part
+			if strings.Contains(strings.ToLower(team), "women") || strings.Contains(team, "(W)") {
+				name = name + " W"
+			}
+
 			if i == len(unmatchedTeams)-1 {
 				fmt.Fprintf(f, "    \"%s\"\n", name)
 			} else {
@@ -389,51 +393,56 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string) ([]
 }
 
 func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (*models.Team, error) {
-	// Debug for Chiefs Women specifically
-	if strings.Contains(rugbyDBTeam.Name, "Chiefs") || strings.Contains(rugbyDBTeam.Name, "Manawa") {
-		fmt.Printf("\n=== Debug Chiefs Women ===\n")
-		fmt.Printf("Looking for match for: %s\n", rugbyDBTeam.Name)
-	}
-
-	teams, err := store.GetAllTeams()
+	country, err := store.GetCountryByName(normalizeCountryName(rugbyDBTeam.Country))
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter teams by country first
-	var countryTeams []*models.Team
-	for _, team := range teams {
-		// Clean up country names for comparison
-		dbCountry := strings.ReplaceAll(team.Country.Name, "-", " ")
-		rugbyDBCountry := strings.ReplaceAll(rugbyDBTeam.Country, "-", " ")
-		if strings.EqualFold(dbCountry, rugbyDBCountry) {
-			countryTeams = append(countryTeams, team)
+	// Get teams for this country directly
+	countryTeams, err := store.GetTeamsByCountryCode(country.Code)
+	if err != nil {
+		return nil, err
+	}
+
+	// First check TeamNameMapping for all teams
+	for _, team := range countryTeams {
+		if nickname := TeamNameMapping[team.Name]; nickname == rugbyDBTeam.Name {
+			return team, nil
 		}
 	}
 
-	// First try exact match with country
-	for _, team := range countryTeams {
-		if strings.Contains(rugbyDBTeam.Name, "Chiefs") {
-			fmt.Printf("Checking team: %s\n", team.Name)
-			fmt.Printf("Checking suffixes for '%s' and '%s'\n", rugbyDBTeam.Name, team.Name)
-		}
+	// If this is a strict match team, only allow matching via TeamNameMapping
+	if rugbydb.StrictMatchTeams[rugbyDBTeam.Name] {
+		return nil, fmt.Errorf("no exact mapping found for strict match team %s", rugbyDBTeam.Name)
+	}
 
+	// First try exact match with country
+	// fmt.Printf("Country teams: %+v\n", countryTeams)
+	// fmt.Printf("Found %d teams in %s\n", len(countryTeams), country.Name)
+	for _, team := range countryTeams {
 		// Skip if suffixes don't match
 		if hasDifferentSuffix(rugbyDBTeam.Name, team.Name) {
-			if strings.Contains(rugbyDBTeam.Name, "Chiefs") {
-				fmt.Printf("Suffixes don't match\n")
-			}
 			continue
 		}
 
 		// Standardize women's team names for comparison only
 		compareTeamName := team.Name
 		compareRugbyDBName := rugbyDBTeam.Name
-		if strings.Contains(team.Name, "Blues") || strings.Contains(rugbyDBTeam.Name, "Blues") {
-			fmt.Printf("\n=== Debug Name Standardization ===\n")
-			fmt.Printf("Original DB name: %s\n", team.Name)
-			fmt.Printf("Original RugbyDB name: %s\n", rugbyDBTeam.Name)
+		// fmt.Printf("Comparing our team %s with RugbyDB team %s\n", compareTeamName, compareRugbyDBName)
+		// Standardize U20/Under 20 variations to "U20" for comparison
+		for _, suffix := range []string{" Under 20", " Under20", " U20"} {
+			if strings.HasSuffix(compareTeamName, suffix) {
+				compareTeamName = strings.TrimSuffix(compareTeamName, suffix) + " U20"
+				break
+			}
 		}
+		for _, suffix := range []string{" Under 20", " Under20", " U20"} {
+			if strings.HasSuffix(compareRugbyDBName, suffix) {
+				compareRugbyDBName = strings.TrimSuffix(compareRugbyDBName, suffix) + " U20"
+				break
+			}
+		}
+
 		// Standardize to single " W" suffix for comparison
 		for _, suffix := range []string{" Women (W)", " (W)", " Women"} {
 			if strings.HasSuffix(compareTeamName, suffix) {
@@ -456,7 +465,7 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 
 		// First check if this team maps to the RugbyDB name
 		if nickname := TeamNameMapping[team.Name]; nickname == rugbyDBTeam.Name {
-			fmt.Printf("Found nickname match: %s -> %s\n", team.Name, nickname)
+			// fmt.Printf("Found nickname match: %s -> %s\n", team.Name, nickname)
 			return team, nil
 		}
 
@@ -464,21 +473,32 @@ func (a *APIClient) FindMatchingTeam(store *db.Store, rugbyDBTeam RugbyDBTeam) (
 		if hasOppositeDirections(rugbyDBTeam.Name, team.Name) {
 			continue
 		}
+
+		// For strict match teams, don't allow exact name matches
+		if rugbydb.StrictMatchTeams[rugbyDBTeam.Name] && strings.EqualFold(team.Name, rugbyDBTeam.Name) {
+			continue
+		}
+
 		if strings.EqualFold(compareTeamName, compareRugbyDBName) {
-			fmt.Printf("Found exact match: %s\n", team.ID)
-			// Check if our team name maps to the RugbyDB team name
-			fmt.Printf("Adding alternate name %s for team %s\n", rugbyDBTeam.Name, team.Name)
-			if nickname := TeamNameMapping[team.Name]; nickname == rugbyDBTeam.Name {
+			// fmt.Printf("Found exact match: %s\n", team.ID)
+			// Always add RugbyDB name as alternate if it's different
+			if team.Name != rugbyDBTeam.Name {
 				if team.AltNames == nil {
 					team.AltNames = []string{}
 				}
-				team.AltNames = append(team.AltNames, rugbyDBTeam.Name)
-				fmt.Printf("Adding alternate name %s for team %s\n", rugbyDBTeam.Name, team.Name)
-				fmt.Printf("Full team object being saved: %+v\n", team)
-				// Update the team in the database
-				if err := store.UpsertTeam(team); err != nil {
-					fmt.Printf("Error updating team alternate names for %s: %v\n", team.Name, err)
-					fmt.Printf("Team data attempted to save: %+v\n", team)
+				// Check if name already exists in alternates
+				exists := false
+				for _, altName := range team.AltNames {
+					if altName == rugbyDBTeam.Name {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					team.AltNames = append(team.AltNames, rugbyDBTeam.Name)
+					if err := store.UpsertTeam(team); err != nil {
+						fmt.Printf("Error updating team alternate names for %s: %v\n", team.Name, err)
+					}
 				}
 			}
 			return team, nil
@@ -509,7 +529,7 @@ func (a *APIClient) createTeamFromRugbyDB(store *db.Store, rugbyDBTeam RugbyDBTe
 	}
 
 	// Upload logo if exists
-	if rugbyDBTeam.LogoURL != "" {
+	if rugbyDBTeam.LogoURL != "" && !strings.HasSuffix(rugbyDBTeam.LogoURL, "TeamImage.webp") {
 		destPath := fmt.Sprintf("logos/teams/%s/%s/%s.png",
 			country.Code,
 			strings.TrimPrefix(internalID, country.Code+"-"),
@@ -541,5 +561,189 @@ func (a *APIClient) createTeamFromRugbyDB(store *db.Store, rugbyDBTeam RugbyDBTe
 }
 
 type TeamCreateRequest struct {
-	Names []string `json:"names"`
+	Names   []string `json:"names"`
+	Country string   `json:"country"`
+}
+
+func (a *APIClient) GetLeaguesByYear(store *db.Store, year int) ([]models.League, error) {
+	var allLeagues []models.League
+
+	// Get leagues for single year format (e.g., "2025")
+	singleYearLeagues, err := a.scrapeLeaguesFromURL(fmt.Sprintf("https://www.rugbydatabase.co.nz/competitions.php?year=%d", year), year, store)
+	if err != nil {
+		return nil, err
+	}
+	allLeagues = append(allLeagues, singleYearLeagues...)
+
+	// Get leagues for year-range format (e.g., "2025-2026")
+	yearRangeLeagues, err := a.scrapeLeaguesFromURL(fmt.Sprintf("https://www.rugbydatabase.co.nz/competitions.php?year=%d-%d", year, year+1), year, store)
+	if err != nil {
+		return nil, err
+	}
+	allLeagues = append(allLeagues, yearRangeLeagues...)
+
+	return allLeagues, nil
+}
+
+func (a *APIClient) scrapeLeaguesFromURL(url string, year int, store *db.Store) ([]models.League, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add browser-like headers
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+
+	resp, err := a.makeRequestWithRetries(req, 3)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var leagues []models.League
+	doc.Find(".competition").Each(func(i int, s *goquery.Selection) {
+		name := strings.TrimSpace(s.Find("h2").Text())
+		if name == "" {
+			name = strings.TrimSpace(s.Find("a").Text())
+		}
+		// Get country from our mappings
+		countryInfo, exists := rugbydb.LeagueCountryMap[name]
+		if !exists {
+			fmt.Printf("Warning: No country mapping found for league %s\n", name)
+			return
+		}
+
+		// Get country details from database
+		countryDetails, err := store.GetCountryByCode(countryInfo.Country)
+		if err != nil {
+			fmt.Printf("Error getting country %s from database: %v\n", countryInfo.Country, err)
+			return
+		}
+
+		// Extract RugbyDB ID from the URL
+		rugbyDBID := ""
+		if href, exists := s.Find("a").Attr("href"); exists {
+			if parts := strings.Split(href, "competitionId="); len(parts) > 1 {
+				rugbyDBID = parts[1]
+			}
+		}
+
+		// Get the logo URL
+		logoURL := ""
+		if imgSrc, exists := s.Find("img").Attr("src"); exists {
+			if strings.HasPrefix(imgSrc, "http") {
+				logoURL = imgSrc
+			} else {
+				logoURL = "https://www.rugbydatabase.co.nz/" + strings.TrimPrefix(imgSrc, "/")
+			}
+		}
+
+		// Create league ID from name and country
+		fmt.Printf("Country: %s\n", countryDetails.Name)
+		id := fmt.Sprintf("%s-%s",
+			countryDetails.Code,
+			strings.ToUpper(strings.ReplaceAll(name, " ", "-")),
+		)
+
+		// Check if we already have an API mapping
+		mapping, _ := store.GetAPIMappingByAPIID("rugbydatabase", rugbyDBID, "league")
+		if mapping != nil {
+			// Update existing league
+			existingLeague, err := store.GetLeagueByID(mapping.EntityID)
+			if err == nil {
+				// Update any necessary fields...
+				existingLeague.UpdatedAt = time.Now()
+				if err := store.UpsertLeague(existingLeague); err != nil {
+					fmt.Printf("Error updating league %s: %v\n", existingLeague.ID, err)
+				}
+				return
+			}
+		}
+
+		// Get full country details from database
+		countryDetails, err = store.GetCountryByName(normalizeCountryName(countryDetails.Name))
+		if err != nil {
+			fmt.Printf("Warning: Could not find country %s in database: %v\n", countryDetails.Name, err)
+			countryDetails = &models.Country{Name: countryDetails.Name}
+		}
+
+		// Get competition format (League, Cup, etc.)
+		format := "League"
+		var structure []string
+		if formatInfo, exists := rugbydb.LeagueFormats[name]; exists {
+			format = formatInfo.Format
+			structure = formatInfo.Phases
+		} else if strings.Contains(strings.ToLower(name), "cup") {
+			format = "Cup"
+		}
+
+		// Determine gender
+		gender := "Men" // Default
+		if strings.Contains(name, "(W)") || strings.Contains(strings.ToLower(name), "women") {
+			gender = "Women"
+		}
+
+		// Convert country codes to Country objects
+		var teamCountries []models.Country
+		for _, code := range rugbydb.LeagueCountryMap[name].Countries {
+			country, err := store.GetCountryByCode(code)
+			if err == nil {
+				teamCountries = append(teamCountries, *country)
+			}
+		}
+
+		league := models.League{
+			ID:            id,
+			Name:          name,
+			Country:       *countryDetails,
+			TeamCountries: teamCountries,
+			AltNames:      rugbydb.LeagueAltNames[name],
+			Format:        format,
+			Phases:        structure,
+			RugbyDBID:     rugbyDBID,
+			Gender:        gender,
+			International: rugbydb.InternationalCompetitions[name],
+			LogoURL:       logoURL,
+			LogoSource:    "rugbydatabase",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+			Seasons: []models.Season{{
+				ID:        fmt.Sprintf("%s-SEASON-%d", id, year),
+				LeagueID:  id,
+				Year:      year,
+				Current:   time.Now().Year() == year,
+				StartDate: time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC),
+				EndDate:   time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC),
+			}},
+			Tier: rugbydb.LeagueTiers[name],
+		}
+
+		// Save league to database
+		if err := store.UpsertLeague(&league); err != nil {
+			fmt.Printf("Error creating league %s: %v\n", league.ID, err)
+			return
+		}
+
+		// Create API mapping
+		mapping = &models.APIMapping{
+			EntityID:   league.ID,
+			APIName:    "rugbydatabase",
+			APIID:      rugbyDBID,
+			EntityType: "league",
+		}
+		if err := store.UpsertAPIMapping(mapping); err != nil {
+			fmt.Printf("Error creating API mapping for league %s: %v\n", league.Name, err)
+		}
+
+		leagues = append(leagues, league)
+	})
+
+	return leagues, nil
 }

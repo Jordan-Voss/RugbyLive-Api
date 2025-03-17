@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"rugby-live-api/config"
 	"rugby-live-api/db"
 	"rugby-live-api/handlers"
 	"rugby-live-api/services"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
@@ -56,6 +58,22 @@ func main() {
 	router.GET("/wikidata/teams", h.GetWikidataTeams)
 	router.GET("/wikidata/teams/search", h.SearchWikidataTeams)
 	router.POST("/rugbydb/teams", h.GetRugbyDBTeams)
+	router.GET("/rugbydb/leagues/:year", func(c *gin.Context) {
+		yearStr := c.Param("year")
+		year, err := strconv.Atoi(yearStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid year format"})
+			return
+		}
+
+		leagues, err := apiClient.GetLeaguesByYear(store, year)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, leagues)
+	})
 
 	// Start server
 	router.Run(":8080")

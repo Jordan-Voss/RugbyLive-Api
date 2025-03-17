@@ -276,11 +276,58 @@ type RugbyDBTeam struct {
 
 // TeamNameMapping maps RugbyDB team names to standardized team names
 var TeamNameMapping = map[string]string{
-	"New Zealand":   "All Blacks",
-	"South Africa":  "Springboks",
-	"Australia":     "Wallabies",
-	"France":        "Les Bleus",
-	"New Zealand W": "Black Ferns (W)",
+	"New Zealand":             "All Blacks",
+	"South Africa":            "Springboks",
+	"Australia":               "Wallabies",
+	"France":                  "Les Bleus",
+	"New Zealand W":           "Black Ferns (W)",
+	"British & Irish Lions":   "British and Irish Lions",
+	"British and Irish Lions": "British & Irish Lions",
+	"Stade Rochelais":         "La Rochelle",
+	"Stade Toulousain":        "Toulouse",
+	"Racing 92":               "Racing Metro 92",
+	"ASM Clermont":            "Clermont Auvergne",
+	"Section Paloise":         "Pau",
+	"Union Bordeaux":          "Bordeaux Begles",
+	"Bordeaux Begles":         "Union Bordeaux Begles",
+	"RC Toulonnais":           "Toulon",
+	"Montpellier Herault RC":  "Montpellier",
+	"Stade Francais Paris":    "Stade Francais",
+	"CA Brive":                "Brive",
+	"Lyon OU":                 "Lyon",
+	"Perpignan":               "USA Perpignan",
+	"Castres Olympique":       "Castres",
+	"Aviron Bayonnais":        "Bayonne",
+	"Biarritz Olympique":      "Biarritz",
+	"US Dax":                  "Dax",
+	"Grenoble FC":             "Grenoble",
+	"US Oyonnax":              "Oyonnax",
+	"USAP":                    "USAP",
+	"USA Perpignan":           "Perpignan",
+	"Rouen":                   "Rouen",
+	"Rouen Normandie":         "Rouen",
+	"Bristol":                 "Bristol Bears",
+	"Bristol Bears":           "Bristol",
+	"Cardiff Rugby":           "Cardiff",
+	"Dragons RFC":             "Dragons",
+	"Dragons":                 "Dragons RFC",
+	"Zebre Parma":             "Zebre",
+	"Zebre":                   "Zebre Parma",
+	"Kobe Steel":              "Kobelco Kobe Steelers",
+	"Black Rams":              "Black Rams Tokyo",
+	"Spears Kubota":           "Kubota Spears",
+	"Red Hurricanes":          "Red Hurricanes Osaka",
+	"Wild Knights":            "Saitama Wild Knights",
+	"Suntory Sungoliath":      "Tokyo Sungoliath",
+	"Toshiba Brave Lupus":     "Toshiba Brave Lupus Tokyo",
+	"Toyota Industries":       "Toyota Industries Shuttles Aichi",
+	"Canon Eagles":            "Yokohama Canon Eagles",
+	"Anthem Rugby Carolina":   "Anthem Rugby Carolina",
+	"NOLA Gold":               "New Orleans Gold",
+	"New York Metropolitan":   "Rugby New York",
+	"United States":           "USA",
+	"USA":                     "United States",
+	"USA W":                   "United States W",
 }
 
 // TeamNameNormalizer removes common suffixes and standardizes team names
@@ -292,7 +339,7 @@ func TeamNameNormalizer(name string) string {
 	// First check if we have a direct mapping
 	if standardName, exists := TeamNameMapping[name]; exists {
 		if strings.Contains(name, "Blues") {
-			fmt.Printf("Found mapping for %s -> %s\n", name, standardName)
+			// fmt.Printf("Found mapping for %s -> %s\n", name, standardName)
 		}
 		return standardName
 	}

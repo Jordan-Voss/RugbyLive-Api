@@ -34,7 +34,7 @@ type ListResponse struct {
 }
 
 func (c *APIClient) downloadAndStoreImage(sourceURL string, destinationPath string) (string, error) {
-	fmt.Printf("- Downloading image...\n")
+	// fmt.Printf("- Downloading image...\n")
 	// Create request with headers
 	req, err := http.NewRequest("GET", sourceURL, nil)
 	if err != nil {

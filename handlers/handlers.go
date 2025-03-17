@@ -235,6 +235,7 @@ func (h *Handler) SearchWikidataTeams(c *gin.Context) {
 
 func (h *Handler) GetRugbyDBTeams(c *gin.Context) {
 	var priorityTeams []string
+	var countryFilter string
 
 	// Handle both GET and POST methods
 	if c.Request.Method == "POST" {
@@ -244,11 +245,13 @@ func (h *Handler) GetRugbyDBTeams(c *gin.Context) {
 			return
 		}
 		priorityTeams = req.Names
+		countryFilter = req.Country
 	} else {
 		priorityTeams = c.QueryArray("teams")
+		countryFilter = c.Query("country")
 	}
 
-	teams, err := h.apiClient.GetRugbyDBTeams(h.store, priorityTeams)
+	teams, err := h.apiClient.GetRugbyDBTeams(h.store, priorityTeams, countryFilter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch teams: %v", err)})
 		return
@@ -263,7 +266,7 @@ func (h *Handler) CreateRugbyDBTeams(c *gin.Context) {
 		return
 	}
 
-	teams, err := h.apiClient.GetRugbyDBTeams(h.store, req.Names)
+	teams, err := h.apiClient.GetRugbyDBTeams(h.store, req.Names, req.Country)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to process teams: %v", err)})
 		return

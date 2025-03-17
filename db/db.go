@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"rugby-live-api/models"
 	"time"
 
@@ -43,87 +42,45 @@ func (s *Store) UpsertCountry(country *models.Country) error {
 
 func (s *Store) UpsertLeague(league *models.League) error {
 	query := `
-        INSERT INTO leagues (
-            id, 
-            name, 
-            type, 
-            logo, 
-            country_code,
-            created_at, 
-            updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $6)
-        ON CONFLICT (id)
-        DO UPDATE SET
+        INSERT INTO leagues (id, name, country_code, tier, format, alt_names, logo_url)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
-            type = EXCLUDED.type,
-            logo = EXCLUDED.logo,
             country_code = EXCLUDED.country_code,
-            updated_at = EXCLUDED.updated_at
-        RETURNING id`
-
-	// First ensure the country exists
-	if err := s.UpsertCountry(&league.Country); err != nil {
-		return fmt.Errorf("failed to upsert country: %v", err)
-	}
-
-	// Then create/update the league
-	err := s.DB.QueryRow(
-		query,
+            tier = EXCLUDED.tier,
+            format = EXCLUDED.format,
+            alt_names = EXCLUDED.alt_names,
+            logo_url = EXCLUDED.logo_url
+    `
+	_, err := s.DB.Exec(query,
 		league.ID,
 		league.Name,
-		league.Type,
-		league.Logo,
-		league.Country.Code, // Use country code as foreign key
-		time.Now(),
-	).Scan(&league.ID)
-
-	if err != nil {
-		return err
-	}
-
-	// Insert seasons if they exist
-	if len(league.Seasons) > 0 {
-		for _, season := range league.Seasons {
-			if err := s.UpsertSeason(league.ID, &season); err != nil {
-				log.Printf("Error upserting season for league %s: %v", league.ID, err)
-			}
-		}
-	}
-
-	return nil
+		league.Country.Code,
+		league.Tier,
+		league.Format,
+		pq.Array(league.AltNames),
+		league.LogoURL,
+	)
+	return err
 }
 
-// Add this new function to handle seasons
-func (s *Store) UpsertSeason(leagueID string, season *models.Season) error {
+func (s *Store) UpsertSeason(season *models.Season) error {
 	query := `
-        INSERT INTO seasons (
-            league_id,
-            year,
-            current,
-            start_date,
-            end_date,
-            created_at,
-            updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $6)
-        ON CONFLICT (league_id, year)
-        DO UPDATE SET
-            current = EXCLUDED.current,
+        INSERT INTO seasons (id, league_id, year, start_date, end_date)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE SET
+            league_id = EXCLUDED.league_id,
+            year = EXCLUDED.year,
             start_date = EXCLUDED.start_date,
-            end_date = EXCLUDED.end_date,
-            updated_at = EXCLUDED.updated_at`
-
-	_, err := s.DB.Exec(
-		query,
-		leagueID,
+            end_date = EXCLUDED.end_date
+    `
+	_, err := s.DB.Exec(query,
+		season.ID,
+		season.LeagueID,
 		season.Year,
-		season.Current,
-		season.Start,
-		season.End,
-		time.Now(),
+		season.StartDate,
+		season.EndDate,
 	)
-
 	return err
 }
 
@@ -132,8 +89,6 @@ func (s *Store) UpsertTeam(team *models.Team) error {
 	if err := s.UpsertCountry(&team.Country); err != nil {
 		return fmt.Errorf("failed to upsert team country: %v", err)
 	}
-	print("Upserting team:")
-	print(team)
 	// Convert string slice to Postgres array
 	var altNames interface{}
 	if team.AltNames != nil {
@@ -347,8 +302,8 @@ func (s *Store) GetLeagueByID(id string) (*models.League, error) {
 	err := s.DB.QueryRow(query, id).Scan(
 		&league.ID,
 		&league.Name,
-		&league.Type,
-		&league.Logo,
+		&league.Format,
+		&league.LogoURL,
 		&league.LogoSource,
 		&league.Country.Code,
 		&league.CreatedAt,
@@ -376,7 +331,7 @@ func (s *Store) GetLeagueByID(id string) (*models.League, error) {
 
 	for rows.Next() {
 		var season models.Season
-		err := rows.Scan(&season.Year, &season.Current, &season.Start, &season.End)
+		err := rows.Scan(&season.Year, &season.Current, &season.StartDate, &season.EndDate)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning season: %v", err)
 		}
@@ -499,6 +454,7 @@ func (s *Store) GetAllTeams() ([]*models.Team, error) {
 		team.LogoSource = logoSource.String
 		teams = append(teams, team)
 	}
+	fmt.Printf("Found %d teams\n", len(teams))
 	return teams, nil
 }
 

@@ -45,25 +45,6 @@ type Country struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-type Season struct {
-	Year    int       `json:"season"`
-	Current bool      `json:"current"`
-	Start   time.Time `json:"start"`
-	End     time.Time `json:"end"`
-}
-
-type League struct {
-	ID         string    `json:"id"` // e.g., "ARG-TOP12-2024"
-	Name       string    `json:"name"`
-	Type       string    `json:"type"`
-	Logo       string    `json:"logo"`
-	LogoSource string    `json:"logo_source"`
-	Country    Country   `json:"country"`
-	Seasons    []Season  `json:"seasons,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
-
 type Team struct {
 	ID         string        `json:"id"`
 	Name       string        `json:"name"`
