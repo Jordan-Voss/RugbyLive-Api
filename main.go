@@ -9,7 +9,6 @@ import (
 	"rugby-live-api/db"
 	"rugby-live-api/handlers"
 	"rugby-live-api/services"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
@@ -60,18 +59,13 @@ func main() {
 	router.POST("/rugbydb/teams", h.GetRugbyDBTeams)
 	router.GET("/rugbydb/leagues/:year", func(c *gin.Context) {
 		yearStr := c.Param("year")
-		year, err := strconv.Atoi(yearStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid year format"})
-			return
-		}
-
-		leagues, err := apiClient.GetLeaguesByYear(store, year)
+		dryRun := c.DefaultQuery("dry_run", "false")
+		isDryRun := dryRun == "true"
+		leagues, err := apiClient.GetLeaguesByYear(store, yearStr, isDryRun)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
 		c.JSON(http.StatusOK, leagues)
 	})
 

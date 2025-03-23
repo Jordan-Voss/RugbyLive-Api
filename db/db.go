@@ -42,35 +42,63 @@ func (s *Store) UpsertCountry(country *models.Country) error {
 
 func (s *Store) UpsertLeague(league *models.League) error {
 	query := `
-        INSERT INTO leagues (id, name, country_code, tier, format, alt_names, logo_url)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO leagues (
+            id, name, country_code, tier, format, phases, 
+            alt_names, logo_url, team_countries, gender, 
+            logo_source, international, parent_league_id
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+        )
         ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             country_code = EXCLUDED.country_code,
             tier = EXCLUDED.tier,
             format = EXCLUDED.format,
+            phases = EXCLUDED.phases,
             alt_names = EXCLUDED.alt_names,
-            logo_url = EXCLUDED.logo_url
-    `
+            logo_url = EXCLUDED.logo_url,
+            team_countries = EXCLUDED.team_countries,
+            gender = EXCLUDED.gender,
+            logo_source = EXCLUDED.logo_source,
+            international = EXCLUDED.international,
+            parent_league_id = EXCLUDED.parent_league_id,
+            updated_at = NOW()`
+
+	// Extract country codes from TeamCountries
+	countryCodes := make([]string, len(league.TeamCountries))
+	for i, country := range league.TeamCountries {
+		countryCodes[i] = country.Code
+	}
+
 	_, err := s.DB.Exec(query,
 		league.ID,
 		league.Name,
 		league.Country.Code,
 		league.Tier,
 		league.Format,
+		pq.Array(league.Phases),
 		pq.Array(league.AltNames),
 		league.LogoURL,
+		pq.Array(countryCodes),
+		league.Gender,
+		league.LogoSource,
+		league.International,
+		league.ParentID,
 	)
 	return err
 }
 
 func (s *Store) UpsertSeason(season *models.Season) error {
 	query := `
-        INSERT INTO seasons (id, league_id, year, start_date, end_date)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO seasons (
+            id, league_id, year, year_range, start_date, end_date
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (id) DO UPDATE SET
             league_id = EXCLUDED.league_id,
             year = EXCLUDED.year,
+            year_range = EXCLUDED.year_range,
             start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date
     `
@@ -78,6 +106,7 @@ func (s *Store) UpsertSeason(season *models.Season) error {
 		season.ID,
 		season.LeagueID,
 		season.Year,
+		season.YearRange,
 		season.StartDate,
 		season.EndDate,
 	)
@@ -548,4 +577,77 @@ func (s *Store) GetCountryByName(name string) (*models.Country, error) {
 		return nil, err
 	}
 	return &country, nil
+}
+
+func (s *Store) GetSeasonByID(id string) (*models.Season, error) {
+	query := `
+        SELECT id, league_id, year, current, start_date, end_date, created_at, updated_at
+        FROM seasons 
+        WHERE id = $1`
+
+	var season models.Season
+	err := s.DB.QueryRow(query, id).Scan(
+		&season.ID,
+		&season.LeagueID,
+		&season.Year,
+		&season.Current,
+		&season.StartDate,
+		&season.EndDate,
+		&season.CreatedAt,
+		&season.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &season, nil
+}
+
+func (s *Store) GetLeagueByName(name string) (*models.League, error) {
+	query := `
+        SELECT l.id, l.name, l.country_code, l.tier, l.format, l.phases, 
+               l.alt_names, l.logo_url, l.logo_source, l.international, 
+               l.gender, l.created_at, l.updated_at
+        FROM leagues l
+        WHERE l.name = $1`
+
+	var league models.League
+	err := s.DB.QueryRow(query, name).Scan(
+		&league.ID,
+		&league.Name,
+		&league.Country.Code,
+		&league.Tier,
+		&league.Format,
+		pq.Array(&league.Phases),
+		pq.Array(&league.AltNames),
+		&league.LogoURL,
+		&league.LogoSource,
+		&league.International,
+		&league.Gender,
+		&league.CreatedAt,
+		&league.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &league, nil
+}
+
+func (s *Store) UpdateCurrentSeason(leagueID string) error {
+	query := `
+        WITH latest_season AS (
+            SELECT id, year
+            FROM seasons 
+            WHERE league_id = $1 
+            ORDER BY year DESC 
+            LIMIT 1
+        )
+        UPDATE seasons 
+        SET current = CASE
+            WHEN id IN (SELECT id FROM latest_season) THEN true
+            ELSE false
+        END
+        WHERE league_id = $1
+    `
+	_, err := s.DB.Exec(query, leagueID)
+	return err
 }

@@ -37,6 +37,11 @@ var LeagueAltNames = map[string][]string{
 	"United Rugby Championship": {
 		"URC",
 	},
+	"Rugby Championship": {
+		"Tri Nations",
+		"SANZAR Tri Nations",
+		"The Rugby Championship",
+	},
 	"Pro14": {
 		"Pro 14",
 		"Guinness Pro14",
@@ -71,7 +76,7 @@ type LeagueInfo struct {
 var LeagueCountryMap = map[string]LeagueInfo{
 	"Super Rugby Pacific": {
 		Country:   "OCE",
-		Countries: []string{"AU", "NZL", "FJI", "SAM"},
+		Countries: []string{"AUS", "NZL", "FJI", "SAM"},
 	},
 	"Super Rugby Aupiki (W)": {
 		Country:   "OCE",
@@ -122,6 +127,30 @@ var LeagueCountryMap = map[string]LeagueInfo{
 		Country:   "EUR",
 		Countries: []string{"ENG", "FRA", "IRL", "SCO", "WAL", "ITA"},
 	},
+	"Autumn Nations Series": {
+		Country:   "EUR",
+		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"},
+	},
+	"Summer Test Series": {
+		Country:   "WLD",
+		Countries: []string{}, // Will inherit from parent "Summer Tests"
+	},
+	"Summer Tests": {
+		Country:   "WLD",
+		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"}, // Will inherit from parent "Summer Tests"
+	},
+	"Rugby World Cup": {
+		Country:   "WLD",
+		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"}, // Will inherit from parent "Summer Tests"
+	},
+	"The Rugby Championship": {
+		Country:   "WLD",
+		Countries: []string{"ARG", "AUS", "RSA", "NZL"},
+	},
+	"The Rugby Championship U20": {
+		Country:   "WLD",
+		Countries: []string{"ARG", "AUS", "RSA", "NZL"},
+	},
 }
 var OppositeWords = map[string]string{
 	"northern": "southern",
@@ -169,6 +198,8 @@ var LeagueTiers = map[string]int{
 	"Super Rugby Aupiki (W)":       1,
 	"Six Nations Championship (W)": 1,
 	"ProD2":                        2,
+	"The Rugby Championship":       1,
+	"The Rugby Championship U20":   1,
 }
 
 type CompetitionFormat struct {
@@ -210,8 +241,8 @@ var LeagueFormats = map[string]CompetitionFormat{
 		Phases: []string{"Pools", "Playoffs"},
 	},
 	"Autumn Nations Series": {
-		Format: "League",
-		Phases: []string{"League"},
+		Format: "Friendly",
+		Phases: []string{"Friendly"},
 	},
 	"Autumn Nations Cup": {
 		Format: "League",
@@ -233,12 +264,41 @@ var LeagueFormats = map[string]CompetitionFormat{
 		Format: "Friendly",
 		Phases: []string{"Friendly"},
 	},
-	"Summer Test": {
+	"Summer Tests": {
 		Format: "Friendly",
 		Phases: []string{"Friendly"},
 	},
 	"Autumn Test": {
 		Format: "Friendly",
 		Phases: []string{"Friendly"},
+	},
+	"Major League Rugby": {
+		Format: "Hybrid",
+		Phases: []string{"League", "Playoffs"},
+	},
+	"The Rugby Championship": {
+		Format: "League",
+		Phases: []string{"League"},
+	},
+	"The Rugby Championship U20": {
+		Format: "League",
+		Phases: []string{"League"},
+	},
+}
+var LeagueParentMap = map[string]string{
+	"All Blacks in Europe": "Autumn Nations Series",
+	"Summer Test Series":   "Summer Tests",
+}
+
+type LeagueTransition struct {
+	SuccessorID string
+}
+
+var LeagueSuccessors = map[string]LeagueTransition{
+	"Tri Nations": {
+		SuccessorID: "WLD-THE-RUGBY-CHAMPIONSHIP",
+	},
+	"Tri Nations U20": {
+		SuccessorID: "WLD-THE-RUGBY-CHAMPIONSHIP-U20",
 	},
 }

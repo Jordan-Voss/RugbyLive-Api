@@ -9,7 +9,7 @@ import (
 func (a *APIClient) GetLeagues(store *db.Store) error {
 	// Get current year leagues from RugbyDB
 	currentYear := time.Now().Year()
-	rugbyDBLeagues, err := a.GetLeaguesByYear(store, currentYear)
+	rugbyDBLeagues, err := a.GetLeaguesByYear(store, fmt.Sprintf("%d", currentYear), false)
 	if err != nil {
 		return fmt.Errorf("failed to get RugbyDB leagues: %v", err)
 	}

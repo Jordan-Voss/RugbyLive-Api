@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -565,27 +567,55 @@ type TeamCreateRequest struct {
 	Country string   `json:"country"`
 }
 
-func (a *APIClient) GetLeaguesByYear(store *db.Store, year int) ([]models.League, error) {
-	var allLeagues []models.League
+func (a *APIClient) GetLeaguesByYear(store *db.Store, year string, dryRun bool) ([]models.League, error) {
+	// Check if year is in format "2024" or "2024-2025"
+	parts := strings.Split(year, "-")
+	var url string
+	var seasonYear int
+	var yearRange string
 
-	// Get leagues for single year format (e.g., "2025")
-	singleYearLeagues, err := a.scrapeLeaguesFromURL(fmt.Sprintf("https://www.rugbydatabase.co.nz/competitions.php?year=%d", year), year, store)
+	if len(parts) == 2 {
+		// Format is "2024-2025"
+		singleYear, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid year format: %v", err)
+		}
+		url = fmt.Sprintf("https://www.rugbydatabase.co.nz/competitions.php?year=%d-%d", singleYear-1, singleYear)
+		seasonYear = singleYear
+		yearRange = year // Use the full range as provided
+	} else {
+		// Format is "2024"
+		endYear, err := strconv.Atoi(year)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end year format: %v", err)
+		}
+		url = fmt.Sprintf("https://www.rugbydatabase.co.nz/competitions.php?year=%s", year)
+		seasonYear = endYear
+		yearRange = fmt.Sprintf("%d", endYear) // Just use the single year
+	}
+
+	leagues, err := a.scrapeLeaguesFromURL(url, seasonYear, yearRange, store, dryRun)
 	if err != nil {
 		return nil, err
 	}
-	allLeagues = append(allLeagues, singleYearLeagues...)
+	fmt.Printf("Scraped leagues for year: %s\n", year)
 
-	// Get leagues for year-range format (e.g., "2025-2026")
-	yearRangeLeagues, err := a.scrapeLeaguesFromURL(fmt.Sprintf("https://www.rugbydatabase.co.nz/competitions.php?year=%d-%d", year, year+1), year, store)
-	if err != nil {
-		return nil, err
-	}
-	allLeagues = append(allLeagues, yearRangeLeagues...)
-
-	return allLeagues, nil
+	return leagues, nil
 }
 
-func (a *APIClient) scrapeLeaguesFromURL(url string, year int, store *db.Store) ([]models.League, error) {
+type LeagueProcessed struct {
+	Name   string
+	Status string // "existing", "new", "unmapped"
+	Reason string // reason for unmapped status, if any
+}
+
+func cleanLeagueName(name string) string {
+	// Remove year patterns like (2024-25), (2024-2025), (2024)
+	name = regexp.MustCompile(`\s*\(\d{4}(?:-\d{2,4})?\)`).ReplaceAllString(name, "")
+	return strings.TrimSpace(name)
+}
+
+func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string, store *db.Store, dryRun bool) ([]models.League, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -608,21 +638,51 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, store *db.Store) 
 	}
 
 	var leagues []models.League
+	var processed []LeagueProcessed
+
 	doc.Find(".competition").Each(func(i int, s *goquery.Selection) {
 		name := strings.TrimSpace(s.Find("h2").Text())
 		if name == "" {
 			name = strings.TrimSpace(s.Find("a").Text())
 		}
-		// Get country from our mappings
-		countryInfo, exists := rugbydb.LeagueCountryMap[name]
-		if !exists {
-			fmt.Printf("Warning: No country mapping found for league %s\n", name)
-			return
+		name = cleanLeagueName(name)
+
+		// First check if this is a child league
+		var countryInfo rugbydb.LeagueInfo
+		if parentName, isChild := rugbydb.LeagueParentMap[name]; isChild {
+			// Get country info from parent league
+			if parentInfo, exists := rugbydb.LeagueCountryMap[parentName]; exists {
+				countryInfo = parentInfo
+			} else {
+				processed = append(processed, LeagueProcessed{
+					Name:   name,
+					Status: "unmapped",
+					Reason: fmt.Sprintf("parent league %s not found in country map", parentName),
+				})
+				return
+			}
+		} else {
+			// Not a child league, get country info directly
+			var exists bool
+			countryInfo, exists = rugbydb.LeagueCountryMap[name]
+			if !exists {
+				processed = append(processed, LeagueProcessed{
+					Name:   name,
+					Status: "unmapped",
+					Reason: "no country mapping found",
+				})
+				return
+			}
 		}
 
 		// Get country details from database
 		countryDetails, err := store.GetCountryByCode(countryInfo.Country)
 		if err != nil {
+			processed = append(processed, LeagueProcessed{
+				Name:   name,
+				Status: "unmapped",
+				Reason: fmt.Sprintf("country %s not found in database", countryInfo.Country),
+			})
 			fmt.Printf("Error getting country %s from database: %v\n", countryInfo.Country, err)
 			return
 		}
@@ -635,16 +695,6 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, store *db.Store) 
 			}
 		}
 
-		// Get the logo URL
-		logoURL := ""
-		if imgSrc, exists := s.Find("img").Attr("src"); exists {
-			if strings.HasPrefix(imgSrc, "http") {
-				logoURL = imgSrc
-			} else {
-				logoURL = "https://www.rugbydatabase.co.nz/" + strings.TrimPrefix(imgSrc, "/")
-			}
-		}
-
 		// Create league ID from name and country
 		fmt.Printf("Country: %s\n", countryDetails.Name)
 		id := fmt.Sprintf("%s-%s",
@@ -652,98 +702,202 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, store *db.Store) 
 			strings.ToUpper(strings.ReplaceAll(name, " ", "-")),
 		)
 
-		// Check if we already have an API mapping
-		mapping, _ := store.GetAPIMappingByAPIID("rugbydatabase", rugbyDBID, "league")
-		if mapping != nil {
-			// Update existing league
-			existingLeague, err := store.GetLeagueByID(mapping.EntityID)
-			if err == nil {
-				// Update any necessary fields...
-				existingLeague.UpdatedAt = time.Now()
-				if err := store.UpsertLeague(existingLeague); err != nil {
-					fmt.Printf("Error updating league %s: %v\n", existingLeague.ID, err)
+		// Try to find existing league by name
+		existingLeague, err := store.GetLeagueByName(name)
+		var leagueID string
+
+		if err == nil {
+			// Use existing league
+			leagueID = existingLeague.ID
+			leagues = append(leagues, *existingLeague)
+			processed = append(processed, LeagueProcessed{
+				Name:   name,
+				Status: "existing",
+			})
+		} else {
+			// Create new league...
+			// Get competition format (League, Cup, etc.)
+			format := "League"
+			var structure []string
+			if formatInfo, exists := rugbydb.LeagueFormats[name]; exists {
+				format = formatInfo.Format
+				structure = formatInfo.Phases
+			} else if strings.Contains(strings.ToLower(name), "cup") {
+				format = "Cup"
+			}
+
+			// Determine gender
+			gender := "Men" // Default
+			if strings.Contains(name, "(W)") || strings.Contains(strings.ToLower(name), "women") {
+				gender = "Women"
+			}
+
+			// Only get and process logo for new leagues
+			logoURL := ""
+			var logoSource string = "rugbydatabase"
+			if imgSrc, exists := s.Find("img").Attr("src"); exists {
+				if strings.HasPrefix(imgSrc, "http") {
+					logoURL = imgSrc
+				} else {
+					logoURL = "https://www.rugbydatabase.co.nz/" + strings.TrimPrefix(imgSrc, "/")
 				}
+
+				// Download and store the image
+				if !dryRun && logoURL != "" {
+					newLogoURL, err := a.downloadAndStoreImage(
+						logoURL,
+						fmt.Sprintf("logos/leagues/%s/logo.png", id),
+					)
+					if err != nil {
+						fmt.Printf("Error downloading logo for league %s: %v\n", name, err)
+					} else {
+						logoURL = newLogoURL
+					}
+				}
+			}
+
+			// Convert country codes to Country objects
+			var teamCountries []models.Country
+			for _, code := range countryInfo.Countries {
+				country, err := store.GetCountryByCode(code)
+				if err == nil {
+					teamCountries = append(teamCountries, *country)
+				}
+			}
+
+			league := models.League{
+				ID:            id,
+				Name:          name,
+				Country:       *countryDetails,
+				TeamCountries: teamCountries,
+				AltNames:      rugbydb.LeagueAltNames[name],
+				Format:        format,
+				Phases:        structure,
+				Gender:        gender,
+				International: rugbydb.InternationalCompetitions[name],
+				LogoURL:       logoURL,
+				LogoSource:    logoSource,
+				ParentID:      nil, // Default to nil
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+				Seasons: []models.Season{{
+					ID:        fmt.Sprintf("%s-SEASON-%d", id, year),
+					LeagueID:  id,
+					Year:      year,
+					YearRange: yearRange,
+					Current:   time.Now().Year() == year,
+					StartDate: time.Date(year-1, 8, 1, 0, 0, 0, 0, time.UTC),
+					EndDate:   time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC),
+				}},
+				Tier: rugbydb.LeagueTiers[name],
+			}
+
+			// Check if this league has a parent
+			if parentName, hasParent := rugbydb.LeagueParentMap[name]; hasParent {
+				// Try to find the parent league
+				parentLeague, err := store.GetLeagueByName(parentName)
+				if err == nil {
+					league.ParentID = &parentLeague.ID
+					// Inherit properties from parent
+					league.Format = parentLeague.Format
+					league.Phases = parentLeague.Phases
+					league.TeamCountries = append(league.TeamCountries, parentLeague.TeamCountries...)
+				} else {
+					fmt.Printf("Warning: Parent league %s not found for %s\n", parentName, name)
+				}
+			}
+
+			if err := store.UpsertLeague(&league); err != nil {
+				fmt.Printf("Error creating league %s: %v\n", league.ID, err)
 				return
 			}
-		}
 
-		// Get full country details from database
-		countryDetails, err = store.GetCountryByName(normalizeCountryName(countryDetails.Name))
-		if err != nil {
-			fmt.Printf("Warning: Could not find country %s in database: %v\n", countryDetails.Name, err)
-			countryDetails = &models.Country{Name: countryDetails.Name}
-		}
-
-		// Get competition format (League, Cup, etc.)
-		format := "League"
-		var structure []string
-		if formatInfo, exists := rugbydb.LeagueFormats[name]; exists {
-			format = formatInfo.Format
-			structure = formatInfo.Phases
-		} else if strings.Contains(strings.ToLower(name), "cup") {
-			format = "Cup"
-		}
-
-		// Determine gender
-		gender := "Men" // Default
-		if strings.Contains(name, "(W)") || strings.Contains(strings.ToLower(name), "women") {
-			gender = "Women"
-		}
-
-		// Convert country codes to Country objects
-		var teamCountries []models.Country
-		for _, code := range rugbydb.LeagueCountryMap[name].Countries {
-			country, err := store.GetCountryByCode(code)
-			if err == nil {
-				teamCountries = append(teamCountries, *country)
+			// Check if this league has a successor
+			if transition, hasSuccessor := rugbydb.LeagueSuccessors[name]; hasSuccessor {
+				league.SuccessorID = &transition.SuccessorID
+				if err := store.UpsertLeague(&league); err != nil {
+					fmt.Printf("Error updating league successor %s: %v\n", league.ID, err)
+				}
 			}
+
+			leagueID = league.ID
+			leagues = append(leagues, league)
+			processed = append(processed, LeagueProcessed{
+				Name:   name,
+				Status: "new",
+			})
 		}
 
-		league := models.League{
-			ID:            id,
-			Name:          name,
-			Country:       *countryDetails,
-			TeamCountries: teamCountries,
-			AltNames:      rugbydb.LeagueAltNames[name],
-			Format:        format,
-			Phases:        structure,
-			RugbyDBID:     rugbyDBID,
-			Gender:        gender,
-			International: rugbydb.InternationalCompetitions[name],
-			LogoURL:       logoURL,
-			LogoSource:    "rugbydatabase",
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-			Seasons: []models.Season{{
-				ID:        fmt.Sprintf("%s-SEASON-%d", id, year),
-				LeagueID:  id,
-				Year:      year,
-				Current:   time.Now().Year() == year,
-				StartDate: time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC),
-				EndDate:   time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC),
-			}},
-			Tier: rugbydb.LeagueTiers[name],
+		// Create season
+		seasonID := fmt.Sprintf("%s-SEASON-%d", leagueID, year)
+		season := models.Season{
+			ID:        seasonID,
+			LeagueID:  leagueID,
+			Year:      year,
+			YearRange: yearRange,
+			Current:   time.Now().Year() == year,
+			StartDate: time.Date(year-1, 8, 1, 0, 0, 0, 0, time.UTC),
+			EndDate:   time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC),
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
 		}
 
-		// Save league to database
-		if err := store.UpsertLeague(&league); err != nil {
-			fmt.Printf("Error creating league %s: %v\n", league.ID, err)
+		if err := store.UpsertSeason(&season); err != nil {
+			fmt.Printf("Error creating season %s: %v\n", seasonID, err)
 			return
 		}
 
-		// Create API mapping
-		mapping = &models.APIMapping{
-			EntityID:   league.ID,
+		// Update current season flag
+		if err := store.UpdateCurrentSeason(leagueID); err != nil {
+			fmt.Printf("Error updating current season for league %s: %v\n", leagueID, err)
+		}
+
+		// Create season API mapping
+		seasonMapping := &models.APIMapping{
+			EntityID:   seasonID,
 			APIName:    "rugbydatabase",
 			APIID:      rugbyDBID,
-			EntityType: "league",
+			EntityType: "league_season",
 		}
-		if err := store.UpsertAPIMapping(mapping); err != nil {
-			fmt.Printf("Error creating API mapping for league %s: %v\n", league.Name, err)
+		if err := store.UpsertAPIMapping(seasonMapping); err != nil {
+			fmt.Printf("Error creating API mapping for season %s: %v\n", seasonID, err)
 		}
-
-		leagues = append(leagues, league)
 	})
 
+	// Write league statuses to file
+	if err := a.writeLeaguesToFile(processed, yearRange); err != nil {
+		fmt.Printf("Warning: failed to write leagues to file: %v\n", err)
+	}
+
 	return leagues, nil
+}
+
+func (a *APIClient) writeLeaguesToFile(processed []LeagueProcessed, year string) error {
+	filename := fmt.Sprintf("leagues_%s.txt", year)
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll("output", 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Open file for writing
+	f, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %v", err)
+	}
+	defer f.Close()
+
+	// Write each league to file
+	for _, p := range processed {
+		if p.Status == "unmapped" {
+			_, err = fmt.Fprintf(f, "%s (%s: %s)\n", p.Name, p.Status, p.Reason)
+		} else {
+			_, err = fmt.Fprintf(f, "%s (%s)\n", p.Name, p.Status)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to write to file: %v", err)
+		}
+	}
+
+	return nil
 }
