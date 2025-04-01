@@ -274,3 +274,34 @@ func (h *Handler) CreateRugbyDBTeams(c *gin.Context) {
 
 	c.JSON(http.StatusOK, teams)
 }
+
+func (h *Handler) MapAPISportsLeagues(c *gin.Context) {
+	results, err := h.apiClient.MapAPISportsLeagues()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to map leagues: %v", err)})
+		return
+	}
+
+	// Group results by match status
+	matched := make([]services.LeagueMappingResult, 0)
+	unmatched := make([]services.LeagueMappingResult, 0)
+
+	for _, result := range results {
+		if result.Matched {
+			matched = append(matched, result)
+		} else {
+			unmatched = append(unmatched, result)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"matched":   matched,
+		"unmatched": unmatched,
+		"stats": gin.H{
+			"total":      len(results),
+			"matched":    len(matched),
+			"unmatched":  len(unmatched),
+			"match_rate": float64(len(matched)) / float64(len(results)),
+		},
+	})
+}

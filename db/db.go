@@ -651,3 +651,19 @@ func (s *Store) UpdateCurrentSeason(leagueID string) error {
 	_, err := s.DB.Exec(query, leagueID)
 	return err
 }
+
+func (s *Store) GetLeagueTransition(name string, year int) (*models.LeagueTransition, error) {
+	query := `
+        SELECT successor_id, transition_year, display_name 
+        FROM league_transitions 
+        WHERE old_name = $1 AND transition_year > $2 
+        ORDER BY transition_year ASC 
+        LIMIT 1`
+
+	var transition models.LeagueTransition
+	err := s.DB.QueryRow(query, name, year).Scan(&transition.SuccessorID, &transition.Year, &transition.DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	return &transition, nil
+}

@@ -68,6 +68,7 @@ func main() {
 		}
 		c.JSON(http.StatusOK, leagues)
 	})
+	router.GET("/leagues/map-api-sports", h.MapAPISportsLeagues)
 
 	// Start server
 	router.Run(":8080")

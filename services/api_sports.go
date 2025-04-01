@@ -9,6 +9,7 @@ import (
 	"os"
 	"rugby-live-api/db"
 	"rugby-live-api/models"
+	"rugby-live-api/services/rugbydb"
 	"strings"
 	"time"
 )
@@ -686,4 +687,85 @@ func (a *APIClient) fetchTeamsForCountry(store *db.Store, url string, updateImag
 	}
 
 	return changes, failedTeams, nil
+}
+
+// Add new function to fetch and map leagues
+func (a *APIClient) MapAPISportsLeagues() ([]LeagueMappingResult, error) {
+	url := "https://v1.rugby.api-sports.io/leagues"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("x-rapidapi-key", os.Getenv("API_SPORTS_KEY"))
+	req.Header.Add("x-rapidapi-host", "v1.rugby.api-sports.io")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		Response []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+			Type string `json:"type"`
+			Logo string `json:"logo"`
+		} `json:"response"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	var results []LeagueMappingResult
+	for _, league := range apiResp.Response {
+		result := LeagueMappingResult{
+			APILeague: APILeague{
+				ID:   league.ID,
+				Name: league.Name,
+				Type: league.Type,
+			},
+			Matched:     false,
+			MatchedName: "",
+			Reason:      "no_match",
+		}
+
+		// Try to match with our league mappings
+		cleanName := rugbydb.CleanLeagueName(league.Name)
+		if _, exists := rugbydb.LeagueCountryMap[cleanName]; exists {
+			result.Matched = true
+			result.MatchedName = cleanName
+			result.Reason = "direct_match"
+			if countryInfo, ok := rugbydb.LeagueCountryMap[cleanName]; ok {
+				result.InternalID = fmt.Sprintf("%s-%s", countryInfo.Country,
+					strings.ToUpper(strings.ReplaceAll(cleanName, " ", "-")))
+			}
+		} else {
+			// Check alt names
+			for ourName, altNames := range rugbydb.LeagueAltNames {
+				for _, altName := range altNames {
+					if strings.EqualFold(cleanName, altName) {
+						result.Matched = true
+						result.MatchedName = ourName
+						result.Reason = "alt_name_match"
+						if countryInfo, ok := rugbydb.LeagueCountryMap[ourName]; ok {
+							result.InternalID = fmt.Sprintf("%s-%s", countryInfo.Country,
+								strings.ToUpper(strings.ReplaceAll(ourName, " ", "-")))
+						}
+						break
+					}
+				}
+				if result.Matched {
+					break
+				}
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
 }

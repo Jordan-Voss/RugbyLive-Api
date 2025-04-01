@@ -347,3 +347,17 @@ func TeamNameNormalizer(name string) string {
 	// Return name as-is if no mapping exists
 	return name
 }
+
+type APILeague struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type LeagueMappingResult struct {
+	APILeague   APILeague `json:"api_league"`
+	Matched     bool      `json:"matched"`
+	MatchedName string    `json:"matched_name,omitempty"`
+	InternalID  string    `json:"internal_id,omitempty"`
+	Reason      string    `json:"reason"`
+}

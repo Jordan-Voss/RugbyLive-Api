@@ -141,3 +141,9 @@ type TeamStadium struct {
 	StartDate time.Time `json:"start_date,omitempty"`
 	EndDate   time.Time `json:"end_date,omitempty"`
 }
+
+type LeagueTransition struct {
+	SuccessorID string
+	Year        int
+	DisplayName string
+}

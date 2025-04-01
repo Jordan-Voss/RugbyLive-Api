@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -609,12 +608,6 @@ type LeagueProcessed struct {
 	Reason string // reason for unmapped status, if any
 }
 
-func cleanLeagueName(name string) string {
-	// Remove year patterns like (2024-25), (2024-2025), (2024)
-	name = regexp.MustCompile(`\s*\(\d{4}(?:-\d{2,4})?\)`).ReplaceAllString(name, "")
-	return strings.TrimSpace(name)
-}
-
 func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string, store *db.Store, dryRun bool) ([]models.League, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -645,21 +638,30 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 		if name == "" {
 			name = strings.TrimSpace(s.Find("a").Text())
 		}
-		name = cleanLeagueName(name)
+		name = rugbydb.CleanLeagueName(name)
 
 		// First check if this is a child league
 		var countryInfo rugbydb.LeagueInfo
 		if parentName, isChild := rugbydb.LeagueParentMap[name]; isChild {
-			// Get country info from parent league
-			if parentInfo, exists := rugbydb.LeagueCountryMap[parentName]; exists {
-				countryInfo = parentInfo
-			} else {
+			// Try to find the parent league
+			parentLeague, err := store.GetLeagueByName(parentName)
+			if err != nil {
+				// Parent league doesn't exist yet, mark as unmapped
 				processed = append(processed, LeagueProcessed{
 					Name:   name,
 					Status: "unmapped",
-					Reason: fmt.Sprintf("parent league %s not found in country map", parentName),
+					Reason: fmt.Sprintf("parent league %s not found in database", parentName),
 				})
 				return
+			}
+			// Get country info from parent league
+			var countryCodes []string
+			for _, country := range parentLeague.TeamCountries {
+				countryCodes = append(countryCodes, country.Code)
+			}
+			countryInfo = rugbydb.LeagueInfo{
+				Country:   parentLeague.Country.Code,
+				Countries: countryCodes,
 			}
 		} else {
 			// Not a child league, get country info directly
@@ -749,7 +751,9 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 						fmt.Sprintf("logos/leagues/%s/logo.png", id),
 					)
 					if err != nil {
-						fmt.Printf("Error downloading logo for league %s: %v\n", name, err)
+						if !strings.Contains(err.Error(), "409") {
+							fmt.Printf("Error downloading logo for league %s: %v\n", name, err)
+						}
 					} else {
 						logoURL = newLogoURL
 					}
@@ -801,23 +805,31 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 					// Inherit properties from parent
 					league.Format = parentLeague.Format
 					league.Phases = parentLeague.Phases
+					league.Country = parentLeague.Country
+					league.Gender = parentLeague.Gender
 					league.TeamCountries = append(league.TeamCountries, parentLeague.TeamCountries...)
+					league.International = parentLeague.International // Inherit international flag
+					league.Tier = parentLeague.Tier                   // Inherit tier
+					// Don't inherit:
+					// - Name (unique to child)
+					// - ID (unique to child)
+					// - LogoURL (may be different)
 				} else {
 					fmt.Printf("Warning: Parent league %s not found for %s\n", parentName, name)
+				}
+			}
+
+			// Check for any transitions in the database
+			if transition, err := store.GetLeagueTransition(name, year); err == nil {
+				league.SuccessorID = &transition.SuccessorID
+				if err := store.UpsertLeague(&league); err != nil {
+					fmt.Printf("Error updating league successor %s: %v\n", league.ID, err)
 				}
 			}
 
 			if err := store.UpsertLeague(&league); err != nil {
 				fmt.Printf("Error creating league %s: %v\n", league.ID, err)
 				return
-			}
-
-			// Check if this league has a successor
-			if transition, hasSuccessor := rugbydb.LeagueSuccessors[name]; hasSuccessor {
-				league.SuccessorID = &transition.SuccessorID
-				if err := store.UpsertLeague(&league); err != nil {
-					fmt.Printf("Error updating league successor %s: %v\n", league.ID, err)
-				}
 			}
 
 			leagueID = league.ID
@@ -889,10 +901,8 @@ func (a *APIClient) writeLeaguesToFile(processed []LeagueProcessed, year string)
 
 	// Write each league to file
 	for _, p := range processed {
-		if p.Status == "unmapped" {
+		if p.Status == "unmapped" || p.Status == "new" {
 			_, err = fmt.Fprintf(f, "%s (%s: %s)\n", p.Name, p.Status, p.Reason)
-		} else {
-			_, err = fmt.Fprintf(f, "%s (%s)\n", p.Name, p.Status)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to write to file: %v", err)
