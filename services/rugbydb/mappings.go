@@ -1,10 +1,5 @@
 package rugbydb
 
-import (
-	"regexp"
-	"strings"
-)
-
 var TeamSuffixes = []string{
 	" Women (W)",
 	" Women",
@@ -96,227 +91,42 @@ var LeagueAltNames = map[string][]string{
 	},
 }
 
+// LeagueInfo contains metadata about a league
 type LeagueInfo struct {
 	Country   string
-	Countries []string
+	Countries []string // For multi-country leagues
 }
 
+// LeagueCountryMap maps league names to their country codes
 var LeagueCountryMap = map[string]LeagueInfo{
-	"Super Rugby Pacific": {
-		Country:   "OCE",
-		Countries: []string{"AUS", "NZL", "FJI", "SAM"},
-	},
-	"Super Rugby Aupiki (W)": {
-		Country:   "OCE",
-		Countries: []string{"NZL"},
-	},
-	"United Rugby Championship": {
-		Country:   "EUR",
-		Countries: []string{"IRL", "ITA", "SCO", "RSA", "WAL"},
-	},
-	"Premiership Rugby": {
-		Country:   "ENG",
-		Countries: []string{"ENG"},
-	},
-	"RFU Championship": {
-		Country:   "ENG",
-		Countries: []string{"ENG"},
-	},
-	"Top 14": {
-		Country:   "FRA",
-		Countries: []string{"FRA"},
-	},
-	"Currie Cup": {
-		Country:   "RSA",
-		Countries: []string{"RSA"},
-	},
-	"National Provincial Championship": {
-		Country:   "NZL",
-		Countries: []string{"NZL"},
-	},
-	"Major League Rugby": {
-		Country:   "USA",
-		Countries: []string{"USA"},
-	},
-	"Ranfurly Shield": {
-		Country:   "NZL",
-		Countries: []string{"NZL"},
-	},
-
-	"Rugby Europe Championship": {
-		Country:   "EUR",
-		Countries: []string{"GEO", "ROU", "POR", "ESP", "GER", "SWI", "NED", "BEL"},
-	},
-	"Women's Six Nations Championship (W)": {
-		Country:   "EUR",
-		Countries: []string{"ENG", "FRA", "IRL", "SCO", "WAL", "ITA"},
-	},
-	"Six Nations Championship": {
-		Country:   "EUR",
-		Countries: []string{"ENG", "FRA", "IRL", "SCO", "WAL", "ITA"},
-	},
-	"Six Nations Under 20s Championship": {
-		Country:   "EUR",
-		Countries: []string{"ENG", "FRA", "IRL", "SCO", "WAL", "ITA"},
-	},
-	"Autumn Nations Series": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"},
-	},
-	"Summer Test Series": {
-		Country:   "WLD",
-		Countries: []string{}, // Will inherit from parent "Summer Tests"
-	},
-	"Summer Tests": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"}, // Will inherit from parent "Summer Tests"
-	},
-	"International Friendly": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"},
-	},
-	"International Friendly (W)": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"},
-	},
-	"Rugby World Cup": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "ASM", "AUS", "AUT", "BEL", "BRA", "CAN", "CHL", "CHN", "CIV", "COK", "COL", "CZE", "ENG", "ESP", "FJI", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"}, // Will inherit from parent "Summer Tests"
-	},
-	"The Rugby Championship": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "AUS", "RSA", "NZL"},
-	},
-	"The Rugby Championship U20": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "AUS", "RSA", "NZL"},
-	},
-	"British & Irish Lions Tour": {
-		Country:   "WLD",
-		Countries: []string{"AUS", "ENG", "SCO", "WAL", "IRL", "NZL", "RSA"},
-	},
-	"Premiership Rugby Cup": {
-		Country:   "ENG",
-		Countries: []string{"ENG"},
-	},
-	"EPCR Challenge Cup": {
-		Country:   "EUR",
-		Countries: []string{"FRA", "ITA", "ENG", "SCO", "WAL", "IRL", "GEO"},
-	},
-	"European Champions Cup": {
-		Country:   "EUR",
-		Countries: []string{"FRA", "ITA", "ENG", "SCO", "WAL", "IRL"},
-	},
-	"Pro D2": {
-		Country:   "FRA",
-		Countries: []string{"FRA"},
-	},
-	"Japan Rugby League One - Division 1": {
-		Country:   "JPN",
-		Countries: []string{"JPN"},
-	},
-	"Japan Rugby League One - Division 2": {
-		Country:   "JPN",
-		Countries: []string{"JPN"},
-	},
-	"Japan Rugby League One - Division 3": {
-		Country:   "JPN",
-		Countries: []string{"JPN"},
-	},
-	"Bledisloe Cup": {
-		Country:   "OCE",
-		Countries: []string{"AUS", "NZL"},
-	},
-	"Laurie O'Reilly Cup (W)": {
-		Country:   "OCE",
-		Countries: []string{"AUS", "NZL"},
-	},
-	"Farah Palmer Cup (W)": {
-		Country:   "NZL",
-		Countries: []string{"NZL"},
-	},
-	"Heartland Championship": {
-		Country:   "NZL",
-		Countries: []string{"NZL"},
-	},
-	"JJ Stewart Trophy (W)": {
-		Country:   "NZL",
-		Countries: []string{"NZL"},
-	},
-	"Pacific Nations Cup": {
-		Country:   "WLD",
-		Countries: []string{"FJI", "SAM", "TGA", "USA", "JPN", "CAN"},
-	},
-	"World Rugby U20 Championship": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "AUS", "BRA", "CAN", "CHL", "CHN", "CIV", "CZE", "ENG", "ESP", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "TUN", "TUR", "TUV", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"},
-	},
-	"WXV (W)": {
-		Country:   "WLD",
-		Countries: []string{"ARG", "AUS", "BRA", "CAN", "CHL", "CHN", "CIV", "CZE", "ENG", "ESP", "FRA", "GEO", "GER", "HKG", "IRL", "ITA", "JPN", "KAZ", "KEN", "KOR", "LKA", "MDG", "NAM", "NIU", "NLD", "NZL", "PHL", "PNG", "POL", "POR", "PRY", "ROU", "RSA", "RUS", "SAM", "SAU", "SCO", "SGP", "SWE", "SWI", "TGA", "THA", "TUN", "TUR", "TUV", "UAE", "UGA", "UGY", "USA", "VEN", "VUT", "WAL"},
-	},
-}
-var OppositeWords = map[string]string{
-	"northern": "southern",
-	"southern": "northern",
-	"eastern":  "western",
-	"western":  "eastern",
-	"north":    "south",
-	"south":    "north",
-	"east":     "west",
-	"west":     "east",
+	"Super Rugby":               {Country: "INT"},
+	"Six Nations":               {Country: "INT"},
+	"Rugby Championship":        {Country: "INT"},
+	"European Champions Cup":    {Country: "INT"},
+	"European Challenge Cup":    {Country: "INT"},
+	"United Rugby Championship": {Country: "INT"},
+	"Premiership":               {Country: "ENG"},
+	"Top 14":                    {Country: "FRA"},
+	// Add more leagues as needed
 }
 
-// equivalentSuffixes groups suffixes that should be treated as the same
-var EquivalentSuffixes = map[string][]string{
-	" W":         {" Women", " (W)", " Women (W)"},
-	" Women":     {" W", " (W)", " Women (W)"},
-	" (W)":       {" W", " Women", " Women (W)"},
-	" Women (W)": {" W", " Women", " (W)"},
-	" U20":       {" Under 20", " Under20"},
-	" Under 20":  {" U20", " Under 20"},
-	" Under20":   {" U20", " Under 20"},
+// TeamCountryMap maps team names to their country codes
+var TeamCountryMap = map[string]string{
+	"Crusaders":   "NZL",
+	"Blues":       "NZL",
+	"Hurricanes":  "NZL",
+	"Chiefs":      "NZL",
+	"Highlanders": "NZL",
+	"England":     "ENG",
+	"France":      "FRA",
+	"Ireland":     "IRL",
+	"Wales":       "WAL",
+	"Scotland":    "SCO",
+	"Italy":       "ITA",
+	// Add more teams as needed
 }
 
-// Teams that should only match with their exact mapping
-var StrictMatchTeams = map[string]bool{
-	"Cardiff": true, // Should only match with "Cardiff Rugby"
-}
-
-var LeagueTiers = map[string]int{
-	"Super Rugby Pacific":          1,
-	"United Rugby Championship":    1,
-	"Premiership Rugby":            1,
-	"Top 14":                       1,
-	"European Rugby Champions Cup": 1,
-	"Rugby Championship":           1,
-	"Six Nations Championship":     1,
-	"Rugby World Cup":              1,
-
-	"European Challenge Cup":           2,
-	"Currie Cup":                       2,
-	"Rugby Europe Championship":        2,
-	"National Provincial Championship": 2,
-	"Major League Rugby":               1,
-
-	"Super Rugby Aupiki (W)":              1,
-	"Six Nations Championship (W)":        1,
-	"ProD2":                               2,
-	"The Rugby Championship":              1,
-	"The Rugby Championship U20":          1,
-	"British & Irish Lions Tour":          1,
-	"Pro D2":                              2,
-	"Japan Rugby League One - Division 1": 1,
-	"Japan Rugby League One - Division 2": 2,
-	"Japan Rugby League One - Division 3": 3,
-	"Farah Palmer Cup (W)":                2,
-	"Heartland Championship":              3,
-	"JJ Stewart Trophy (W)":               2,
-	"Pacific Nations Cup":                 1,
-	"World Rugby U20 Championship":        1,
-	"WXV (W)":                             1,
-}
-
+// Add this near the top of the file, with the other type definitions
 type CompetitionFormat struct {
 	Format string   // "League", "Cup", "Hybrid", "Series", "Friendly"
 	Phases []string // ["League", "Knockout"] or ["Series"] or ["Friendly"]
@@ -564,20 +374,58 @@ var LeagueNameStandardization = map[string]string{
 	"World Rugby Pacific Nations Cup": "Pacific Nations Cup",
 }
 
+// CleanLeagueName standardizes league names for comparison
 func CleanLeagueName(name string) string {
-	// Remove year patterns
-	name = regexp.MustCompile(`\s*\(\d{4}(?:-\d{2,4})?\)`).ReplaceAllString(name, "")
-
-	// Standardize the name if it exists in the mapping
-	if standardName, ok := LeagueNameStandardization[name]; ok {
-		return standardName
-	}
-
-	return strings.TrimSpace(name)
+	// Add any league name cleaning logic here
+	return name
 }
 
 // Competitions that can share matches with other competitions
 var SharedMatchCompetitions = map[string]bool{
 	"Bledisloe Cup":           true,
 	"Laurie O'Reilly Cup (W)": true,
+}
+
+// StrictMatchTeams are teams that should only be matched via exact TeamNameMapping
+var StrictMatchTeams = map[string]bool{
+	"England":  true,
+	"France":   true,
+	"Ireland":  true,
+	"Wales":    true,
+	"Scotland": true,
+	"Italy":    true,
+	// Add other strict match teams as needed
+}
+
+// LeagueTiers maps league names to their tier level (1 = top tier)
+var LeagueTiers = map[string]int{
+	"Six Nations":               1,
+	"Rugby Championship":        1,
+	"Premiership":               1,
+	"Top 14":                    1,
+	"Super Rugby":               1,
+	"United Rugby Championship": 1,
+	"ProD2":                     2,
+	"RFU Championship":          2,
+	// Add more leagues and their tiers as needed
+}
+
+// EquivalentSuffixes maps team name suffixes to their equivalent variations
+var EquivalentSuffixes = map[string][]string{
+	" Women": {" (W)", " W", " Women (W)"},
+	" (W)":   {" Women", " W", " Women (W)"},
+	" W":     {" Women", " (W)", " Women (W)"},
+	" U20":   {" Under 20", " Under20"},
+}
+
+// OppositeWords maps words to their opposites for team name comparison
+var OppositeWords = map[string]string{
+	"home":   "away",
+	"away":   "home",
+	"men":    "women",
+	"women":  "men",
+	"boys":   "girls",
+	"girls":  "boys",
+	"senior": "junior",
+	"junior": "senior",
 }

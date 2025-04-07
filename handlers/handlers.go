@@ -7,6 +7,10 @@ import (
 	"rugby-live-api/db"
 	"rugby-live-api/models"
 	"rugby-live-api/services"
+	"rugby-live-api/services/apisports"
+	"rugby-live-api/services/rapidapi"
+	"rugby-live-api/services/rugbydb"
+	"rugby-live-api/services/wikidata"
 	"strconv"
 	"time"
 
@@ -14,21 +18,25 @@ import (
 )
 
 type Handler struct {
-	apiClient *services.APIClient
+	apiSports *apisports.Client
+	rapidAPI  *rapidapi.Client
+	wikidata  *wikidata.Client
+	rugbydb   *rugbydb.Client
 	store     *db.Store
-	rugbyLive *services.RugbyLiveAPI
 }
 
 func NewHandler(store *db.Store) *Handler {
 	return &Handler{
-		apiClient: services.NewAPIClient(),
+		apiSports: apisports.NewClient(),
+		rapidAPI:  rapidapi.NewClient(),
+		wikidata:  wikidata.NewClient(),
+		rugbydb:   rugbydb.NewClient(),
 		store:     store,
-		rugbyLive: services.NewRugbyLiveAPI(),
 	}
 }
 
 func (h *Handler) GetMatches(c *gin.Context) {
-	matches, err := h.apiClient.FetchFromAPISports()
+	matches, err := h.apiSports.FetchFromAPISports()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch matches: " + err.Error()})
 		return
@@ -134,7 +142,7 @@ func (h *Handler) RefreshCountries(c *gin.Context) {
 		updateFlags = c.Query("update_flags") == "true"
 	}
 
-	changes, err := h.apiClient.FetchAndStoreCountries(h.store, updateFlags)
+	changes, err := h.apiSports.FetchAndStoreCountries(h.store, updateFlags)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh countries: " + err.Error()})
 		return
@@ -150,7 +158,7 @@ func (h *Handler) RefreshCountries(c *gin.Context) {
 func (h *Handler) RefreshLeagues(c *gin.Context) {
 	log.Println("Refreshing leagues update images: ", c.Query("update_images"))
 	updateImages := c.Query("update_images") == "true"
-	changes, err := h.apiClient.FetchAndStoreLeagues(h.store, updateImages)
+	changes, err := h.apiSports.FetchAndStoreLeagues(h.store, updateImages)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh leagues: " + err.Error()})
 		return
@@ -164,7 +172,7 @@ func (h *Handler) RefreshLeagues(c *gin.Context) {
 
 func (h *Handler) RefreshTeams(c *gin.Context) {
 	updateImages := c.Query("update_images") == "true"
-	params := services.TeamSearchParams{
+	params := apisports.TeamSearchParams{
 		CountryID: c.Query("country"),
 		LeagueID:  c.Query("league"),
 	}
@@ -180,7 +188,7 @@ func (h *Handler) RefreshTeams(c *gin.Context) {
 		return
 	}
 
-	changes, failedTeams, err := h.apiClient.FetchAndStoreTeams(h.store, updateImages, params)
+	changes, failedTeams, err := h.apiSports.FetchAndStoreTeams(h.store, updateImages, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh teams: " + err.Error()})
 		return
@@ -195,7 +203,7 @@ func (h *Handler) RefreshTeams(c *gin.Context) {
 }
 
 func (h *Handler) UpdateTeamImages(c *gin.Context) {
-	if err := h.apiClient.UpdateTeamImages(h.store); err != nil {
+	if err := h.apiSports.UpdateTeamImages(h.store); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update team images: " + err.Error()})
 		return
 	}
@@ -203,7 +211,7 @@ func (h *Handler) UpdateTeamImages(c *gin.Context) {
 }
 
 func (h *Handler) GetESPNLeagues(c *gin.Context) {
-	leagues, err := h.apiClient.ScrapeESPNLeagues()
+	leagues, err := h.apiSports.ScrapeESPNLeagues()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to scrape leagues: %v", err)})
 		return
@@ -212,7 +220,7 @@ func (h *Handler) GetESPNLeagues(c *gin.Context) {
 }
 
 func (h *Handler) GetWikidataTeams(c *gin.Context) {
-	teams, err := h.apiClient.GetWikidataTeams()
+	teams, err := h.wikidata.GetTeams()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch teams: %v", err)})
 		return
@@ -227,7 +235,7 @@ func (h *Handler) SearchWikidataTeams(c *gin.Context) {
 		return
 	}
 
-	team, err := h.apiClient.SearchWikidataTeam(name)
+	team, err := h.apiSports.SearchWikidataTeam(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to search teams: %v", err)})
 		return
@@ -253,7 +261,7 @@ func (h *Handler) GetRugbyDBTeams(c *gin.Context) {
 		countryFilter = c.Query("country")
 	}
 
-	teams, err := h.apiClient.GetRugbyDBTeams(h.store, priorityTeams, countryFilter)
+	teams, err := h.rugbydb.GetTeams(h.store, priorityTeams, countryFilter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch teams: %v", err)})
 		return
@@ -268,7 +276,7 @@ func (h *Handler) CreateRugbyDBTeams(c *gin.Context) {
 		return
 	}
 
-	teams, err := h.apiClient.GetRugbyDBTeams(h.store, req.Names, req.Country)
+	teams, err := h.apiSports.GetRugbyDBTeams(h.store, req.Names, req.Country)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to process teams: %v", err)})
 		return
@@ -278,15 +286,15 @@ func (h *Handler) CreateRugbyDBTeams(c *gin.Context) {
 }
 
 func (h *Handler) MapAPISportsLeagues(c *gin.Context) {
-	results, err := h.apiClient.MapAPISportsLeagues(h.store)
+	results, err := h.apiSports.MapAPISportsLeagues(h.store)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to map leagues: %v", err)})
 		return
 	}
 
 	// Group results by match status
-	matched := make([]services.LeagueMappingResult, 0)
-	unmatched := make([]services.LeagueMappingResult, 0)
+	matched := make([]apisports.LeagueMappingResult, 0)
+	unmatched := make([]apisports.LeagueMappingResult, 0)
 
 	for _, result := range results {
 		if result.Matched {
@@ -315,7 +323,7 @@ func (h *Handler) GetLeagueIDsByYear(c *gin.Context) {
 		return
 	}
 
-	mappings, err := h.apiClient.GetLeagueIDsByYear(year, h.store)
+	mappings, err := h.apiSports.GetLeagueIDsByYear(year, h.store)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get league IDs: %v", err)})
 		return
@@ -345,8 +353,8 @@ func (h *Handler) GetMatchesByLeague(c *gin.Context) {
 		dateParam = date
 	}
 
-	matches, dailyMatchesList, err := h.apiClient.GetMatchesByLeague(leagueID, date, season,
-		services.APIParams{
+	matches, dailyMatchesList, err := h.apiSports.GetMatchesByLeague(leagueID, date, season,
+		apisports.APIParams{
 			LeagueID: apiLeagueID,
 			Season:   apiSeason,
 			Date:     dateParam,
@@ -372,7 +380,7 @@ func (h *Handler) GetMatchesByLeague(c *gin.Context) {
 }
 
 func (h *Handler) GetRugbyLiveCompetitions(c *gin.Context) {
-	competitions, err := h.rugbyLive.GetCompetitions()
+	competitions, err := h.rapidAPI.GetCompetitions()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch competitions: %v", err)})
 		return
