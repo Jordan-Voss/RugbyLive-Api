@@ -65,8 +65,9 @@ var LeagueAltNames = map[string][]string{
 		"Celtic Rugby League",
 	},
 	"European Champions Cup": {
-		"Champions Cup",
+		"European Rugby Champions Cup",
 		"Heineken Champions Cup",
+		"Champions Cup",
 	},
 	"European Rugby Champions Cup": {
 		"Champions Cup",
@@ -556,10 +557,10 @@ var LeagueSuccessors = map[string]LeagueTransition{
 
 // StandardizeLeagueName maps abbreviated/alternate names to their full database names
 var LeagueNameStandardization = map[string]string{
-	"JRLO - Division 1": "Japan Rugby League One - Division 1",
-	"JRLO - Division 2": "Japan Rugby League One - Division 2",
-	"JRLO - Division 3": "Japan Rugby League One - Division 3",
-	"WXV 2024 (W)":      "WXV (W)",
+	"JRLO - Division 1":               "Japan Rugby League One - Division 1",
+	"JRLO - Division 2":               "Japan Rugby League One - Division 2",
+	"JRLO - Division 3":               "Japan Rugby League One - Division 3",
+	"WXV 2024 (W)":                    "WXV (W)",
 	"World Rugby Pacific Nations Cup": "Pacific Nations Cup",
 }
 

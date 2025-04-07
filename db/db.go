@@ -155,17 +155,17 @@ func (s *Store) UpsertMatch(match *models.Match) error {
         INSERT INTO matches (
             id, home_team_id, away_team_id, league_id,
             home_score, away_score, status, kick_off,
-            created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-        ON CONFLICT (id)
-        DO UPDATE SET
+            date, time, created_at, updated_at
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now()
+        )
+        ON CONFLICT (id) DO UPDATE SET
             home_score = EXCLUDED.home_score,
             away_score = EXCLUDED.away_score,
             status = EXCLUDED.status,
-            updated_at = EXCLUDED.updated_at
-        RETURNING id`
+            updated_at = EXCLUDED.updated_at`
 
-	return s.DB.QueryRow(
+	_, err := s.DB.Exec(
 		query,
 		match.ID,
 		match.HomeTeamID,
@@ -175,8 +175,10 @@ func (s *Store) UpsertMatch(match *models.Match) error {
 		match.AwayScore,
 		match.Status,
 		match.KickOff,
-		time.Now(),
-	).Scan(&match.ID)
+		match.Date,
+		match.Time,
+	)
+	return err
 }
 
 func (s *Store) UpsertMatchAPIMapping(mapping *models.MatchAPIMapping) error {
@@ -321,50 +323,59 @@ func (s *Store) GetCountryByCode(code string) (*models.Country, error) {
 }
 
 func (s *Store) GetLeagueByID(id string) (*models.League, error) {
-	// First get the league
 	query := `
-        SELECT id, name, type, logo, logo_source, country_code, created_at, updated_at 
-        FROM leagues 
-        WHERE id = $1`
+        SELECT l.id, l.name, l.country_code, l.tier, l.format, l.phases, 
+               l.alt_names, l.logo_url, l.gender, l.logo_source, 
+               l.international, l.parent_league_id, l.all_time, 
+               l.all_time_league_id, c.name as country_name, c.flag as country_flag
+        FROM leagues l
+        LEFT JOIN countries c ON c.code = l.country_code
+        WHERE l.id = $1`
 
 	var league models.League
+	var countryCode sql.NullString
+	var countryName sql.NullString
+	var countryFlag sql.NullString
+	var parentID sql.NullString
+	var allTimeID sql.NullString
+
 	err := s.DB.QueryRow(query, id).Scan(
 		&league.ID,
 		&league.Name,
+		&countryCode,
+		&league.Tier,
 		&league.Format,
+		pq.Array(&league.Phases),
+		pq.Array(&league.AltNames),
 		&league.LogoURL,
+		&league.Gender,
 		&league.LogoSource,
-		&league.Country.Code,
-		&league.CreatedAt,
-		&league.UpdatedAt,
+		&league.International,
+		&parentID,
+		&league.AllTime,
+		&allTimeID,
+		&countryName,
+		&countryFlag,
 	)
-	if err == sql.ErrNoRows {
-		return nil, err
-	}
+
 	if err != nil {
 		return nil, fmt.Errorf("error querying league: %v", err)
 	}
 
-	// Then get the seasons
-	seasonsQuery := `
-        SELECT year, current, start_date, end_date
-        FROM seasons
-        WHERE league_id = $1
-        ORDER BY year`
-
-	rows, err := s.DB.Query(seasonsQuery, id)
-	if err != nil {
-		return nil, fmt.Errorf("error querying seasons: %v", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var season models.Season
-		err := rows.Scan(&season.Year, &season.Current, &season.StartDate, &season.EndDate)
-		if err != nil {
-			return nil, fmt.Errorf("error scanning season: %v", err)
+	if countryCode.Valid {
+		league.Country = models.Country{
+			Code: countryCode.String,
+			Name: countryName.String,
+			Flag: countryFlag.String,
 		}
-		league.Seasons = append(league.Seasons, season)
+	}
+
+	if parentID.Valid {
+		league.ParentID = &parentID.String
+	}
+
+	if allTimeID.Valid {
+		league.AllTimeID = allTimeID.String
 	}
 
 	return &league, nil
@@ -666,4 +677,61 @@ func (s *Store) GetLeagueTransition(name string, year int) (*models.LeagueTransi
 		return nil, err
 	}
 	return &transition, nil
+}
+
+func (s *Store) GetAPIMappingByEntityID(apiName string, entityID string, entityType string) (*models.APIMapping, error) {
+	query := `
+        SELECT entity_id, api_name, api_id, entity_type, created_at, updated_at
+        FROM api_mappings
+        WHERE api_name = $1 AND entity_id = $2 AND entity_type = $3`
+
+	var mapping models.APIMapping
+	err := s.DB.QueryRow(query, apiName, entityID, entityType).Scan(
+		&mapping.EntityID,
+		&mapping.APIName,
+		&mapping.APIID,
+		&mapping.EntityType,
+		&mapping.CreatedAt,
+		&mapping.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &mapping, nil
+}
+
+func (s *Store) GetSeasonByLeagueAndYear(leagueID string, year string) (*models.Season, error) {
+	query := `
+        SELECT id, league_id, year, current, start_date, end_date, created_at, updated_at
+        FROM seasons 
+        WHERE league_id = $1 AND year = $2`
+
+	var season models.Season
+	err := s.DB.QueryRow(query, leagueID, year).Scan(
+		&season.ID,
+		&season.LeagueID,
+		&season.Year,
+		&season.Current,
+		&season.StartDate,
+		&season.EndDate,
+		&season.CreatedAt,
+		&season.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &season, nil
+}
+
+func (s *Store) UpsertDailyMatches(date string, matchIDs []string) error {
+	query := `
+        INSERT INTO daily_matches (date, match_ids, updated_at)
+        VALUES ($1, $2, now())
+        ON CONFLICT (date) 
+        DO UPDATE SET 
+            match_ids = array_cat(daily_matches.match_ids, EXCLUDED.match_ids),
+            updated_at = now()`
+
+	_, err := s.DB.Exec(query, date, pq.Array(matchIDs))
+	return err
 }

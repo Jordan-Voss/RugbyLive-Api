@@ -1,40 +1,40 @@
 package models
 
 import (
-	"encoding/json"
+	// "encoding/json"
 	"time"
 )
 
-type Match struct {
-	ID          string    `json:"id"` // e.g., "2024-03-08-SARACENS-EXETER"
-	HomeTeamID  string    `json:"home_team_id"`
-	AwayTeamID  string    `json:"away_team_id"`
-	LeagueID    string    `json:"league_id"`
-	HomeScore   int       `json:"home_score"`
-	AwayScore   int       `json:"away_score"`
-	Status      string    `json:"status"`
-	KickOff     time.Time `json:"kick_off"`
-	Week        string    `json:"week"`
-	Season      int       `json:"season"`
-	APISportsID int       `json:"api_sports_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+// type Match struct {
+// 	ID          string    `json:"id"` // e.g., "2024-03-08-SARACENS-EXETER"
+// 	HomeTeamID  string    `json:"home_team_id"`
+// 	AwayTeamID  string    `json:"away_team_id"`
+// 	LeagueID    string    `json:"league_id"`
+// 	HomeScore   int       `json:"home_score"`
+// 	AwayScore   int       `json:"away_score"`
+// 	Status      string    `json:"status"`
+// 	KickOff     time.Time `json:"kick_off"`
+// 	Week        string    `json:"week"`
+// 	Season      int       `json:"season"`
+// 	APISportsID int       `json:"api_sports_id"`
+// 	CreatedAt   time.Time `json:"created_at"`
+// 	UpdatedAt   time.Time `json:"updated_at"`
 
-	// New fields
-	Venue             *string         `json:"venue,omitempty"`
-	Referee           *string         `json:"referee,omitempty"`
-	Attendance        *int            `json:"attendance,omitempty"`
-	WeatherConditions *string         `json:"weather_conditions,omitempty"`
-	HeadToHead        json.RawMessage `json:"head_to_head,omitempty"`
-	Lineups           json.RawMessage `json:"lineups,omitempty"`
-	LiveStats         json.RawMessage `json:"live_stats,omitempty"`
-	UniqueKey         string          `json:"unique_key"`
+// 	// New fields
+// 	Venue             *string         `json:"venue,omitempty"`
+// 	Referee           *string         `json:"referee,omitempty"`
+// 	Attendance        *int            `json:"attendance,omitempty"`
+// 	WeatherConditions *string         `json:"weather_conditions,omitempty"`
+// 	HeadToHead        json.RawMessage `json:"head_to_head,omitempty"`
+// 	Lineups           json.RawMessage `json:"lineups,omitempty"`
+// 	LiveStats         json.RawMessage `json:"live_stats,omitempty"`
+// 	UniqueKey         string          `json:"unique_key"`
 
-	// Joined fields
-	HomeTeam *Team   `json:"home_team,omitempty"`
-	AwayTeam *Team   `json:"away_team,omitempty"`
-	League   *League `json:"league,omitempty"`
-}
+// 	// Joined fields
+// 	HomeTeam *Team   `json:"home_team,omitempty"`
+// 	AwayTeam *Team   `json:"away_team,omitempty"`
+// 	League   *League `json:"league,omitempty"`
+// }
 
 type Country struct {
 	Code       string    `json:"code"`

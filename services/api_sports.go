@@ -1,18 +1,72 @@
 package services
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"rugby-live-api/db"
 	"rugby-live-api/models"
 	"rugby-live-api/services/rugbydb"
+	"strconv"
 	"strings"
 	"time"
 )
+
+type APISportsTeam struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Logo  string `json:"logo"`
+	Score int    `json:"score"`
+}
+
+type APISportsTeams struct {
+	Home APISportsTeam `json:"home"`
+	Away APISportsTeam `json:"away"`
+}
+
+type APISportsMatch struct {
+	ID       string         `json:"id"`
+	Date     string         `json:"date"`
+	LeagueID string         `json:"league_id"`
+	Status   string         `json:"status"`
+	Teams    APISportsTeams `json:"teams"`
+}
+
+type APIParams struct {
+	LeagueID string
+	Season   string
+	Date     string
+}
+
+type Match struct {
+	ID                string          `json:"id"`
+	HomeTeamID        string          `json:"home_team_id"`
+	AwayTeamID        string          `json:"away_team_id"`
+	LeagueID          string          `json:"league_id"`
+	HomeScore         int             `json:"home_score"`
+	AwayScore         int             `json:"away_score"`
+	Status            string          `json:"status"`
+	KickOff           time.Time       `json:"kick_off"`
+	Date              string          `json:"date"`
+	Time              string          `json:"time"`
+	Venue             string          `json:"venue,omitempty"`
+	Referee           string          `json:"referee,omitempty"`
+	Attendance        int             `json:"attendance,omitempty"`
+	WeatherConditions string          `json:"weather_conditions,omitempty"`
+	HeadToHead        json.RawMessage `json:"head_to_head,omitempty"`
+	Lineups           json.RawMessage `json:"lineups,omitempty"`
+	LiveStats         json.RawMessage `json:"live_stats,omitempty"`
+}
+
+type DailyMatches struct {
+	Date     string   `json:"date"`
+	MatchIDs []string `json:"match_ids"`
+}
 
 func (a *APIClient) FetchFromAPISports() ([]models.Match, error) {
 	today := time.Now().Format("2006-01-02")
@@ -100,6 +154,8 @@ func (a *APIClient) standardizeAPISportsData(resp models.APISportsTodaysMatchesR
 			AwayScore:   game.Scores.Away,
 			Status:      game.Status.Long,
 			KickOff:     kickOff,
+			Date:        kickOff.Format("2006-01-02"),
+			Time:        kickOff.Format("15:04"),
 			Week:        game.Week,
 			Season:      game.League.Season,
 			APISportsID: game.ID,
@@ -690,7 +746,7 @@ func (a *APIClient) fetchTeamsForCountry(store *db.Store, url string, updateImag
 }
 
 // Add new function to fetch and map leagues
-func (a *APIClient) MapAPISportsLeagues() ([]LeagueMappingResult, error) {
+func (a *APIClient) MapAPISportsLeagues(store *db.Store) ([]LeagueMappingResult, error) {
 	url := "https://v1.rugby.api-sports.io/leagues"
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -724,7 +780,7 @@ func (a *APIClient) MapAPISportsLeagues() ([]LeagueMappingResult, error) {
 	for _, league := range apiResp.Response {
 		result := LeagueMappingResult{
 			APILeague: APILeague{
-				ID:   league.ID,
+				ID:   strconv.Itoa(league.ID),
 				Name: league.Name,
 				Type: league.Type,
 			},
@@ -735,15 +791,16 @@ func (a *APIClient) MapAPISportsLeagues() ([]LeagueMappingResult, error) {
 
 		// Try to match with our league mappings
 		cleanName := rugbydb.CleanLeagueName(league.Name)
+		matchFound := false
+
 		if _, exists := rugbydb.LeagueCountryMap[cleanName]; exists {
+			matchFound = true
 			result.Matched = true
 			result.MatchedName = cleanName
 			result.Reason = "direct_match"
-			if countryInfo, ok := rugbydb.LeagueCountryMap[cleanName]; ok {
-				result.InternalID = fmt.Sprintf("%s-%s", countryInfo.Country,
-					strings.ToUpper(strings.ReplaceAll(cleanName, " ", "-")))
-			}
-		} else {
+		}
+
+		if !matchFound {
 			// Check alt names
 			for ourName, altNames := range rugbydb.LeagueAltNames {
 				for _, altName := range altNames {
@@ -751,10 +808,6 @@ func (a *APIClient) MapAPISportsLeagues() ([]LeagueMappingResult, error) {
 						result.Matched = true
 						result.MatchedName = ourName
 						result.Reason = "alt_name_match"
-						if countryInfo, ok := rugbydb.LeagueCountryMap[ourName]; ok {
-							result.InternalID = fmt.Sprintf("%s-%s", countryInfo.Country,
-								strings.ToUpper(strings.ReplaceAll(ourName, " ", "-")))
-						}
 						break
 					}
 				}
@@ -764,8 +817,230 @@ func (a *APIClient) MapAPISportsLeagues() ([]LeagueMappingResult, error) {
 			}
 		}
 
+		if result.Matched {
+			if countryInfo, ok := rugbydb.LeagueCountryMap[result.MatchedName]; ok {
+				result.InternalID = fmt.Sprintf("%s-%s", countryInfo.Country,
+					strings.ToUpper(strings.ReplaceAll(result.MatchedName, " ", "-")))
+
+				// Create API mapping for both direct and alt name matches
+				if result.Reason == "direct_match" || result.Reason == "alt_name_match" {
+					mapping := &models.APIMapping{
+						APIName:    "api_sports",
+						APIID:      strconv.Itoa(league.ID),
+						EntityType: "league",
+						EntityID:   result.InternalID,
+					}
+
+					if err := store.UpsertAPIMapping(mapping); err != nil {
+						log.Printf("Warning: failed to create mapping for league %s: %v", result.InternalID, err)
+					}
+				}
+			}
+		}
+
 		results = append(results, result)
 	}
 
 	return results, nil
+}
+
+func (a *APIClient) GetMatchesByLeague(leagueID string, date string, season string, apiParams APIParams, store *db.Store) ([]Match, []*DailyMatches, error) {
+	// Get API Sports league ID from our internal ID if not provided
+	apiLeagueID := apiParams.LeagueID
+	if apiLeagueID == "" {
+		mapping, err := store.GetAPIMappingByEntityID("api_sports", leagueID, "league")
+		if err != nil || mapping == nil {
+			return nil, nil, fmt.Errorf("league not found in API Sports mappings")
+		}
+		apiLeagueID = mapping.APIID
+	}
+
+	// Get season from database
+	dbSeason, err := store.GetSeasonByLeagueAndYear(leagueID, season)
+	if err != nil {
+		return nil, nil, fmt.Errorf("season not found: %v", err)
+	}
+
+	// Build URL with parameters
+	params := make([]string, 0)
+	params = append(params, fmt.Sprintf("league=%s", apiLeagueID))
+	apiSeason := apiParams.Season
+	if apiSeason == "" {
+		apiSeason = season
+	}
+	if apiSeason != "" {
+		params = append(params, fmt.Sprintf("season=%s", apiSeason))
+	}
+	if apiParams.Date != "" {
+		params = append(params, fmt.Sprintf("date=%s", apiParams.Date))
+	}
+
+	url := fmt.Sprintf("https://v1.rugby.api-sports.io/games?%s", strings.Join(params, "&"))
+
+	log.Printf("Calling API Sports URL: %s", url)
+
+	// Reuse existing API response struct and processing logic
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req.Header.Add("x-rapidapi-key", os.Getenv("API_SPORTS_KEY"))
+	req.Header.Add("x-rapidapi-host", "v1.rugby.api-sports.io")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	// Read and log the response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Printf("API Sports response: %s", string(respBody))
+
+	// Create a new reader with the response body for json.Decode
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// Use the same response processing as GetMatchesByDate
+	var apiResp struct {
+		Response []struct {
+			ID     int    `json:"id"`
+			Date   string `json:"date"`
+			Status struct {
+				Long string `json:"long"`
+			} `json:"status"`
+			League struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"league"`
+			Teams struct {
+				Home struct {
+					ID   int    `json:"id"`
+					Name string `json:"name"`
+					Logo string `json:"logo"`
+				} `json:"home"`
+				Away struct {
+					ID   int    `json:"id"`
+					Name string `json:"name"`
+					Logo string `json:"logo"`
+				} `json:"away"`
+			} `json:"teams"`
+			Scores struct {
+				Home int `json:"home"`
+				Away int `json:"away"`
+			} `json:"scores"`
+		} `json:"response"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, nil, err
+	}
+
+	// Process matches using same logic as GetMatchesByDate
+	var matches []Match
+	for _, m := range apiResp.Response {
+		// Get team mappings
+		homeTeamMapping, err := store.GetAPIMappingByAPIID("api_sports", strconv.Itoa(m.Teams.Home.ID), "team")
+		if err != nil || homeTeamMapping == nil {
+			continue
+		}
+
+		awayTeamMapping, err := store.GetAPIMappingByAPIID("api_sports", strconv.Itoa(m.Teams.Away.ID), "team")
+		if err != nil || awayTeamMapping == nil {
+			continue
+		}
+
+		status := "upcoming"
+		if m.Status.Long == "Finished" {
+			status = "finished"
+		} else if m.Status.Long == "In Play" {
+			status = "live"
+		}
+
+		kickOff, _ := time.Parse("2006-01-02T15:04:05-07:00", m.Date)
+		matchID := fmt.Sprintf("%s-%s-%s-%s",
+			dbSeason.ID,
+			homeTeamMapping.EntityID,
+			awayTeamMapping.EntityID,
+			kickOff.Format("20060102"),
+		)
+
+		match := Match{
+			ID:         matchID,
+			HomeTeamID: homeTeamMapping.EntityID,
+			AwayTeamID: awayTeamMapping.EntityID,
+			LeagueID:   dbSeason.ID,
+			HomeScore:  m.Scores.Home,
+			AwayScore:  m.Scores.Away,
+			Status:     status,
+			KickOff:    kickOff,
+			Date:       kickOff.Format("2006-01-02"),
+			Time:       kickOff.Format("15:04"),
+		}
+		matches = append(matches, match)
+
+		// Create API mapping for match
+		matchMapping := &models.APIMapping{
+			EntityID:   matchID,
+			APIName:    "api_sports",
+			APIID:      strconv.Itoa(m.ID),
+			EntityType: "match",
+		}
+		if err := store.UpsertAPIMapping(matchMapping); err != nil {
+			log.Printf("Error creating API mapping for match %s: %v", matchID, err)
+		}
+	}
+
+	// Create daily matches summary if date is provided
+	var dailyMatchesList []*DailyMatches
+
+	// Group matches by date
+	matchesByDate := make(map[string][]string)
+	for _, m := range matches {
+		matchesByDate[m.Date] = append(matchesByDate[m.Date], m.ID)
+	}
+
+	// Create daily matches entries
+	for date, matchIDs := range matchesByDate {
+		// Insert matches
+		for _, match := range matches {
+			dbMatch := &models.Match{
+				ID:         match.ID,
+				HomeTeamID: match.HomeTeamID,
+				AwayTeamID: match.AwayTeamID,
+				LeagueID:   match.LeagueID,
+				HomeScore:  match.HomeScore,
+				AwayScore:  match.AwayScore,
+				Status:     match.Status,
+				KickOff:    match.KickOff,
+				Date:       match.Date,
+				Time:       match.Time,
+			}
+			if err := store.UpsertMatch(dbMatch); err != nil {
+				log.Printf("Error upserting match %s: %v", match.ID, err)
+			}
+		}
+
+		// Insert daily matches
+		if err := store.UpsertDailyMatches(date, matchIDs); err != nil {
+			log.Printf("Error upserting daily matches for date %s: %v", date, err)
+		}
+
+		dailyMatchesList = append(dailyMatchesList, &DailyMatches{
+			Date:     date,
+			MatchIDs: matchIDs,
+		})
+	}
+	// If no matches but date provided, add empty entry
+	if len(dailyMatchesList) == 0 && apiParams.Date != "" {
+		dailyMatchesList = append(dailyMatchesList, &DailyMatches{
+			Date:     apiParams.Date,
+			MatchIDs: []string{},
+		})
+	}
+
+	return matches, dailyMatchesList, nil
 }

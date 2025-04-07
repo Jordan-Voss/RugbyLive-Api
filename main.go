@@ -69,6 +69,14 @@ func main() {
 		c.JSON(http.StatusOK, leagues)
 	})
 	router.GET("/leagues/map-api-sports", h.MapAPISportsLeagues)
+	router.GET("/rugbydb/leagues/ids/:year", h.GetLeagueIDsByYear)
+	router.GET("/matches/api-sports/league", h.GetMatchesByLeague)
+
+	// API routes
+	api := router.Group("/api")
+	{
+		api.GET("/rugby-live/competitions", h.GetRugbyLiveCompetitions)
+	}
 
 	// Start server
 	router.Run(":8080")

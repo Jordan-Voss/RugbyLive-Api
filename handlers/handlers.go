@@ -16,12 +16,14 @@ import (
 type Handler struct {
 	apiClient *services.APIClient
 	store     *db.Store
+	rugbyLive *services.RugbyLiveAPI
 }
 
 func NewHandler(store *db.Store) *Handler {
 	return &Handler{
 		apiClient: services.NewAPIClient(),
 		store:     store,
+		rugbyLive: services.NewRugbyLiveAPI(),
 	}
 }
 
@@ -276,7 +278,7 @@ func (h *Handler) CreateRugbyDBTeams(c *gin.Context) {
 }
 
 func (h *Handler) MapAPISportsLeagues(c *gin.Context) {
-	results, err := h.apiClient.MapAPISportsLeagues()
+	results, err := h.apiClient.MapAPISportsLeagues(h.store)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to map leagues: %v", err)})
 		return
@@ -304,4 +306,76 @@ func (h *Handler) MapAPISportsLeagues(c *gin.Context) {
 			"match_rate": float64(len(matched)) / float64(len(results)),
 		},
 	})
+}
+
+func (h *Handler) GetLeagueIDsByYear(c *gin.Context) {
+	year := c.Param("year")
+	if year == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "year parameter is required"})
+		return
+	}
+
+	mappings, err := h.apiClient.GetLeagueIDsByYear(year, h.store)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get league IDs: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"year":    year,
+		"leagues": mappings,
+	})
+}
+
+func (h *Handler) GetMatchesByLeague(c *gin.Context) {
+	leagueID := c.Query("league_id")
+	if leagueID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "league_id parameter is required"})
+		return
+	}
+
+	date := c.Query("date")
+	season := c.Query("season")
+	apiLeagueID := c.Query("api_league_id")
+	apiSeason := c.Query("api_season")
+	apiDate := c.Query("api_date")
+
+	dateParam := apiDate
+	if dateParam == "" {
+		dateParam = date
+	}
+
+	matches, dailyMatchesList, err := h.apiClient.GetMatchesByLeague(leagueID, date, season,
+		services.APIParams{
+			LeagueID: apiLeagueID,
+			Season:   apiSeason,
+			Date:     dateParam,
+		},
+		h.store)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get matches: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"league_id": leagueID,
+		"date":      date,
+		"season":    season,
+		"api_params": gin.H{
+			"league_id": apiLeagueID,
+			"season":    apiSeason,
+			"date":      apiDate,
+		},
+		"matches":       matches,
+		"daily_matches": dailyMatchesList,
+	})
+}
+
+func (h *Handler) GetRugbyLiveCompetitions(c *gin.Context) {
+	competitions, err := h.rugbyLive.GetCompetitions()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch competitions: %v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, competitions)
 }

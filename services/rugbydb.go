@@ -1,6 +1,7 @@
 package services
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -136,7 +137,6 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string, cou
 	for _, name := range priorityTeams {
 		priorityMap[name] = true
 	}
-
 	done := make(chan bool)
 
 	// Get all existing rugbydatabase team mappings
@@ -163,7 +163,7 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string, cou
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "RugbyLiveAPI/1.0")
+	// req.Header.Set("User-Agent", "RugbyLiveAPI/1.0")
 
 	resp, err := a.makeRequestWithRetries(req, 3)
 	if err != nil {
@@ -175,6 +175,19 @@ func (a *APIClient) GetRugbyDBTeams(store *db.Store, priorityTeams []string, cou
 	if err != nil {
 		return nil, err
 	}
+
+	// Print the HTML structure
+	html, err := doc.Html()
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("HTML Structure:\n%s\n", html)
+
+	// Also print each competition element separately
+	doc.Find(".competition").Each(func(i int, s *goquery.Selection) {
+		html, _ := s.Html()
+		fmt.Printf("\nCompetition %d HTML:\n%s\n", i, html)
+	})
 
 	currentCountry := ""
 	var rugbyDBTeams []RugbyDBTeam
@@ -618,6 +631,7 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+	req.Header.Set("Referer", "https://www.rugbydatabase.co.nz/")
 
 	resp, err := a.makeRequestWithRetries(req, 3)
 	if err != nil {
@@ -629,6 +643,19 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 	if err != nil {
 		return nil, err
 	}
+
+	// Print the HTML structure
+	html, err := doc.Html()
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("HTML Structure:\n%s\n", html)
+
+	// Also print each competition element separately
+	doc.Find(".competition").Each(func(i int, s *goquery.Selection) {
+		html, _ := s.Html()
+		fmt.Printf("\nCompetition %d HTML:\n%s\n", i, html)
+	})
 
 	var leagues []models.League
 	var processed []LeagueProcessed
@@ -910,4 +937,188 @@ func (a *APIClient) writeLeaguesToFile(processed []LeagueProcessed, year string)
 	}
 
 	return nil
+}
+
+type CompetitionGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (a *APIClient) getCompetitionHTML(competitionID string) ([]CompetitionGroup, error) {
+	url := fmt.Sprintf("https://www.rugbydatabase.co.nz/competition/index.php?competitionId=%s", competitionID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add browser-like headers
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+	req.Header.Set("Referer", "https://www.rugbydatabase.co.nz/")
+
+	resp, err := a.makeRequestWithRetries(req, 3)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find all competition group IDs
+	var groups []CompetitionGroup
+	doc.Find("a[href*='competitionGroupId']").Each(func(i int, s *goquery.Selection) {
+		if href, exists := s.Attr("href"); exists {
+			if parts := strings.Split(href, "competitionGroupId="); len(parts) > 1 {
+				groups = append(groups, CompetitionGroup{
+					ID:   parts[1],
+					Name: strings.TrimSpace(s.Text()),
+				})
+			}
+		}
+	})
+
+	return groups, nil
+}
+
+type LeagueIDMapping struct {
+	Name              string               `json:"name"`
+	CompetitionID     string               `json:"competition_id"`
+	Groups            []CompetitionGroup   `json:"groups"`
+	Year              string               `json:"year"`
+	SeasonID          string               `json:"season_id"`
+	LeagueID          string               `json:"league_id"`
+	GroupMappings     []*models.APIMapping `json:"group_mappings,omitempty"`
+	AllTime           bool                 `json:"all_time"`
+	AllTimeID         string               `json:"all_time_id,omitempty"`
+	NewAllTimeLeague  *models.League       `json:"new_all_time_league,omitempty"`
+	NewAllTimeMapping *models.APIMapping   `json:"new_all_time_mapping,omitempty"`
+}
+
+func (a *APIClient) GetLeagueIDsByYear(year string, store *db.Store) ([]LeagueIDMapping, error) {
+	query := `
+		SELECT m.api_id, m.entity_id, l.name, l.all_time, l.all_time_league_id, l.id
+		FROM api_mappings m
+		JOIN seasons s ON s.id = m.entity_id
+		JOIN leagues l ON l.id = s.league_id
+		WHERE m.api_name = 'rugbydatabase' 
+		AND m.entity_type = 'league_season'
+		AND s.year = $1`
+
+	rows, err := store.DB.Query(query, year)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query league mappings: %v", err)
+	}
+	defer rows.Close()
+
+	var mappings []LeagueIDMapping
+	for rows.Next() {
+		var mapping LeagueIDMapping
+		var allTimeID sql.NullString
+		if err := rows.Scan(&mapping.CompetitionID, &mapping.SeasonID, &mapping.Name, &mapping.AllTime, &allTimeID, &mapping.LeagueID); err != nil {
+			return nil, fmt.Errorf("failed to scan mapping: %v", err)
+		}
+		if allTimeID.Valid {
+			mapping.AllTimeID = allTimeID.String
+		}
+		mapping.Year = year
+
+		// Get groups for this competition
+		groups, err := a.getCompetitionHTML(mapping.CompetitionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get groups for competition %s: %v", mapping.CompetitionID, err)
+		}
+		mapping.Groups = groups
+
+		// If we have multiple groups and no all-time league yet
+		if len(groups) > 1 && mapping.AllTimeID == "" {
+			// Get original league to copy fields
+			originalLeague, err := store.GetLeagueByID(mapping.LeagueID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get original league: %v", err)
+			}
+
+			// Create new all-time league
+			allTimeLeague := &models.League{
+				ID:            fmt.Sprintf("%s-ALL-TIME", mapping.LeagueID),
+				Name:          fmt.Sprintf("%s (All Time)", mapping.Name),
+				AllTime:       true,
+				Country:       originalLeague.Country,
+				Format:        originalLeague.Format,
+				Phases:        originalLeague.Phases,
+				AltNames:      originalLeague.AltNames,
+				TeamCountries: originalLeague.TeamCountries,
+				Gender:        originalLeague.Gender,
+				International: originalLeague.International,
+				Tier:          originalLeague.Tier,
+			}
+
+			// Create API mappings for both leagues
+			regularMapping := &models.APIMapping{
+				APIName:    "rugbydatabase",
+				APIID:      groups[0].ID,
+				EntityType: "league",
+				EntityID:   mapping.LeagueID,
+			}
+
+			allTimeMapping := &models.APIMapping{
+				APIName:    "rugbydatabase",
+				APIID:      groups[1].ID,
+				EntityType: "league",
+				EntityID:   allTimeLeague.ID,
+			}
+
+			mapping.NewAllTimeLeague = allTimeLeague
+			mapping.NewAllTimeMapping = allTimeMapping
+			mapping.GroupMappings = append(mapping.GroupMappings, regularMapping)
+			mapping.GroupMappings = append(mapping.GroupMappings, allTimeMapping)
+
+			// Insert the all-time league and its mapping
+			if err := store.UpsertLeague(allTimeLeague); err != nil {
+				return nil, fmt.Errorf("failed to insert all-time league: %v", err)
+			}
+
+			// Insert both mappings
+			if err := store.UpsertAPIMapping(regularMapping); err != nil {
+				return nil, fmt.Errorf("failed to insert regular league mapping: %v", err)
+			}
+
+			if err := store.UpsertAPIMapping(allTimeMapping); err != nil {
+				return nil, fmt.Errorf("failed to insert all-time mapping: %v", err)
+			}
+
+			// Update the original league with the all-time reference
+			query := `
+				UPDATE leagues 
+				SET all_time_league_id = $1, 
+					all_time = true,
+					updated_at = NOW()
+				WHERE id = $2 OR id = $1`
+
+			if _, err := store.DB.Exec(query, allTimeLeague.ID, originalLeague.ID); err != nil {
+				return nil, fmt.Errorf("failed to update original league all_time_id: %v", err)
+			}
+		} else if len(groups) > 0 {
+			// If single group, just create regular mapping
+			regularMapping := &models.APIMapping{
+				APIName:    "rugbydatabase",
+				APIID:      groups[0].ID,
+				EntityType: "league",
+				EntityID:   mapping.LeagueID,
+			}
+			mapping.GroupMappings = append(mapping.GroupMappings, regularMapping)
+
+			if err := store.UpsertAPIMapping(regularMapping); err != nil {
+				return nil, fmt.Errorf("failed to insert regular league mapping: %v", err)
+			}
+		}
+
+		mappings = append(mappings, mapping)
+	}
+
+	return mappings, nil
 }
