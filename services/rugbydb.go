@@ -16,6 +16,30 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+var splitYearLeagues = map[string]bool{
+	"United Rugby Championship":           true,
+	"Top 14":                              true,
+	"Premiership":                         true,
+	"European Rugby Champions Cup":        true,
+	"European Rugby Challenge Cup":        true,
+	"EPCR Challenge Cup":                  true,
+	"Pro D2":                              true,
+	"Six Nations":                         false,
+	"The Rugby Championship":              false,
+	"Super Rugby":                         false,
+	"European Champions Cup":              true,
+	"European Challenge Cup":              true,
+	"RFU Championship":                    true,
+	"Premiership Rugby":                   true,
+	"Premiership Rugby Shield":            true,
+	"Premiership Rugby Cup":               true,
+	"Japan Rugby League One - Division 3": true,
+	"Japan Rugby League One - Division 2": true,
+	"Japan Rugby League One - Division 1": true,
+	"Australia A in England":              true,
+	"Ireland A in England":                true,
+}
+
 func hasDifferentSuffix(name1, name2 string) bool {
 	// Special case: if one name ends with " (W)" and the other contains "Women"
 	if (strings.HasSuffix(name1, " (W)") && strings.Contains(name2, "Women")) ||
@@ -796,6 +820,14 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 				}
 			}
 
+			// Add before creating the league
+			var seasonYear int
+			if splitYearLeagues[name] {
+				seasonYear = year - 1
+			} else {
+				seasonYear = year
+			}
+
 			league := models.League{
 				ID:            id,
 				Name:          name,
@@ -812,15 +844,24 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 				CreatedAt:     time.Now(),
 				UpdatedAt:     time.Now(),
 				Seasons: []models.Season{{
-					ID:        fmt.Sprintf("%s-SEASON-%d", id, year),
+					ID:        fmt.Sprintf("%s-SEASON-%d", id, seasonYear),
 					LeagueID:  id,
-					Year:      year,
+					Year:      seasonYear,
 					YearRange: yearRange,
 					Current:   time.Now().Year() == year,
-					StartDate: time.Date(year-1, 8, 1, 0, 0, 0, 0, time.UTC),
-					EndDate:   time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC),
 				}},
 				Tier: rugbydb.LeagueTiers[name],
+			}
+
+			// Set dates based on whether it's a split-year league
+			if splitYearLeagues[name] {
+				season := &league.Seasons[0]
+				season.StartDate = time.Date(year-1, 8, 1, 0, 0, 0, 0, time.UTC)
+				season.EndDate = time.Date(year, 5, 31, 0, 0, 0, 0, time.UTC)
+			} else {
+				season := &league.Seasons[0]
+				season.StartDate = time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+				season.EndDate = time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC)
 			}
 
 			// Check if this league has a parent
@@ -868,17 +909,29 @@ func (a *APIClient) scrapeLeaguesFromURL(url string, year int, yearRange string,
 		}
 
 		// Create season
-		seasonID := fmt.Sprintf("%s-SEASON-%d", leagueID, year)
+		var seasonYear int
+		if splitYearLeagues[name] {
+			seasonYear = year - 1
+		} else {
+			seasonYear = year
+		}
+
+		seasonID := fmt.Sprintf("%s-SEASON-%d", leagueID, seasonYear)
 		season := models.Season{
 			ID:        seasonID,
 			LeagueID:  leagueID,
-			Year:      year,
+			Year:      seasonYear,
 			YearRange: yearRange,
 			Current:   time.Now().Year() == year,
-			StartDate: time.Date(year-1, 8, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:   time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC),
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+		}
+
+		// Set dates based on whether it's a split-year league
+		if splitYearLeagues[name] {
+			season.StartDate = time.Date(year-1, 8, 1, 0, 0, 0, 0, time.UTC)
+			season.EndDate = time.Date(year, 5, 31, 0, 0, 0, 0, time.UTC)
+		} else {
+			season.StartDate = time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+			season.EndDate = time.Date(year, 12, 31, 0, 0, 0, 0, time.UTC)
 		}
 
 		if err := store.UpsertSeason(&season); err != nil {
@@ -1001,10 +1054,14 @@ type LeagueIDMapping struct {
 
 func (a *APIClient) GetLeagueIDsByYear(year string, store *db.Store) ([]LeagueIDMapping, error) {
 	query := `
-		SELECT m.api_id, m.entity_id, l.name, l.all_time, l.all_time_league_id, l.id
+		SELECT m.api_id, m.entity_id, l.name, l.all_time, l.all_time_league_id, l.id,
+			   alt.id as all_time_league_id,
+			   altm.api_id as all_time_api_id
 		FROM api_mappings m
 		JOIN seasons s ON s.id = m.entity_id
 		JOIN leagues l ON l.id = s.league_id
+		LEFT JOIN leagues alt ON alt.id = l.all_time_league_id
+		LEFT JOIN api_mappings altm ON altm.entity_id = alt.id AND altm.api_name = 'rugbydatabase'
 		WHERE m.api_name = 'rugbydatabase' 
 		AND m.entity_type = 'league_season'
 		AND s.year = $1`
@@ -1018,13 +1075,31 @@ func (a *APIClient) GetLeagueIDsByYear(year string, store *db.Store) ([]LeagueID
 	var mappings []LeagueIDMapping
 	for rows.Next() {
 		var mapping LeagueIDMapping
-		var allTimeID sql.NullString
-		if err := rows.Scan(&mapping.CompetitionID, &mapping.SeasonID, &mapping.Name, &mapping.AllTime, &allTimeID, &mapping.LeagueID); err != nil {
+		var allTimeID, allTimeAPIID sql.NullString
+		if err := rows.Scan(
+			&mapping.CompetitionID,
+			&mapping.SeasonID,
+			&mapping.Name,
+			&mapping.AllTime,
+			&allTimeID,
+			&mapping.LeagueID,
+			&allTimeID,
+			&allTimeAPIID,
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan mapping: %v", err)
 		}
-		if allTimeID.Valid {
-			mapping.AllTimeID = allTimeID.String
+
+		// If there's an existing all-time mapping, add it to GroupMappings
+		if allTimeAPIID.Valid && allTimeID.Valid {
+			allTimeMapping := &models.APIMapping{
+				APIName:    "rugbydatabase",
+				APIID:      allTimeAPIID.String,
+				EntityType: "league",
+				EntityID:   allTimeID.String,
+			}
+			mapping.GroupMappings = append(mapping.GroupMappings, allTimeMapping)
 		}
+
 		mapping.Year = year
 
 		// Get groups for this competition
@@ -1034,17 +1109,34 @@ func (a *APIClient) GetLeagueIDsByYear(year string, store *db.Store) ([]LeagueID
 		}
 		mapping.Groups = groups
 
-		// If we have multiple groups and no all-time league yet
+		// When processing each mapping, create both regular and all-time mappings
 		if len(groups) > 1 && mapping.AllTimeID == "" {
-			// Get original league to copy fields
+			// Get original league first
 			originalLeague, err := store.GetLeagueByID(mapping.LeagueID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get original league: %v", err)
 			}
 
-			// Create new all-time league
+			allTimeLeagueID := fmt.Sprintf("%s-ALL-TIME", mapping.LeagueID)
+
+			// Create API mappings...
+			regularMapping := &models.APIMapping{
+				APIName:    "rugbydatabase",
+				APIID:      groups[0].ID,
+				EntityType: "league",
+				EntityID:   mapping.LeagueID,
+			}
+
+			allTimeMapping := &models.APIMapping{
+				APIName:    "rugbydatabase",
+				APIID:      groups[1].ID,
+				EntityType: "league",
+				EntityID:   allTimeLeagueID,
+			}
+
+			// Create all-time league using original league's data
 			allTimeLeague := &models.League{
-				ID:            fmt.Sprintf("%s-ALL-TIME", mapping.LeagueID),
+				ID:            allTimeLeagueID,
 				Name:          fmt.Sprintf("%s (All Time)", mapping.Name),
 				AllTime:       true,
 				Country:       originalLeague.Country,
@@ -1057,56 +1149,26 @@ func (a *APIClient) GetLeagueIDsByYear(year string, store *db.Store) ([]LeagueID
 				Tier:          originalLeague.Tier,
 			}
 
-			// Create API mappings for both leagues
-			regularMapping := &models.APIMapping{
-				APIName:    "rugbydatabase",
-				APIID:      groups[0].ID,
-				EntityType: "league",
-				EntityID:   mapping.LeagueID,
+			// Store mappings and add to response
+			if err := store.UpsertAPIMapping(regularMapping); err != nil {
+				return nil, fmt.Errorf("failed to insert regular league mapping: %v", err)
 			}
-
-			allTimeMapping := &models.APIMapping{
-				APIName:    "rugbydatabase",
-				APIID:      groups[1].ID,
-				EntityType: "league",
-				EntityID:   allTimeLeague.ID,
+			if err := store.UpsertAPIMapping(allTimeMapping); err != nil {
+				return nil, fmt.Errorf("failed to insert all-time mapping: %v", err)
 			}
-
-			mapping.NewAllTimeLeague = allTimeLeague
-			mapping.NewAllTimeMapping = allTimeMapping
-			mapping.GroupMappings = append(mapping.GroupMappings, regularMapping)
-			mapping.GroupMappings = append(mapping.GroupMappings, allTimeMapping)
-
-			// Insert the all-time league and its mapping
 			if err := store.UpsertLeague(allTimeLeague); err != nil {
 				return nil, fmt.Errorf("failed to insert all-time league: %v", err)
 			}
 
-			// Insert both mappings
-			if err := store.UpsertAPIMapping(regularMapping); err != nil {
-				return nil, fmt.Errorf("failed to insert regular league mapping: %v", err)
-			}
-
-			if err := store.UpsertAPIMapping(allTimeMapping); err != nil {
-				return nil, fmt.Errorf("failed to insert all-time mapping: %v", err)
-			}
-
-			// Update the original league with the all-time reference
-			query := `
-				UPDATE leagues 
-				SET all_time_league_id = $1, 
-					all_time = true,
-					updated_at = NOW()
-				WHERE id = $2 OR id = $1`
-
-			if _, err := store.DB.Exec(query, allTimeLeague.ID, originalLeague.ID); err != nil {
-				return nil, fmt.Errorf("failed to update original league all_time_id: %v", err)
-			}
+			// Add both mappings to GroupMappings
+			mapping.GroupMappings = append(mapping.GroupMappings, regularMapping, allTimeMapping)
+			mapping.NewAllTimeLeague = allTimeLeague
+			mapping.NewAllTimeMapping = allTimeMapping
 		} else if len(groups) > 0 {
-			// If single group, just create regular mapping
+			// Only create the group mapping
 			regularMapping := &models.APIMapping{
 				APIName:    "rugbydatabase",
-				APIID:      groups[0].ID,
+				APIID:      groups[0].ID, // Use group ID (e.g. "46")
 				EntityType: "league",
 				EntityID:   mapping.LeagueID,
 			}

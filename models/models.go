@@ -65,6 +65,7 @@ type APIMapping struct {
 	EntityType string    `json:"entity_type"` // "match", "team", "league"
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	IsActive   bool      `json:"is_active" db:"is_active"`
 }
 
 type MatchAPIMapping struct {
@@ -146,4 +147,11 @@ type LeagueTransition struct {
 	SuccessorID string
 	Year        int
 	DisplayName string
+}
+
+type RapidAPICompetition struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Season     int    `json:"season"`
+	SeasonName string `json:"season_name"`
 }

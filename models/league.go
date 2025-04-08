@@ -26,18 +26,6 @@ type League struct {
 	AllTimeID     string    `json:"all_time_id,omitempty" db:"all_time_league_id"`
 }
 
-type Season struct {
-	ID        string    `json:"id" db:"id"`
-	LeagueID  string    `json:"league_id" db:"league_id"`
-	Year      int       `json:"year" db:"year"`
-	Current   bool      `json:"current" db:"current"`
-	StartDate time.Time `json:"start_date" db:"start_date"`
-	YearRange string    `json:"year_range" db:"year_range"`
-	EndDate   time.Time `json:"end_date" db:"end_date"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
-}
-
 type LeagueTeam struct {
 	ID       string `json:"id" db:"id"`
 	SeasonID string `json:"season_id" db:"season_id"`

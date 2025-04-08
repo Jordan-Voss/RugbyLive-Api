@@ -735,3 +735,31 @@ func (s *Store) UpsertDailyMatches(date string, matchIDs []string) error {
 	_, err := s.DB.Exec(query, date, pq.Array(matchIDs))
 	return err
 }
+
+func (s *Store) GetSeasonByYear(leagueID string, year int) (*models.Season, error) {
+	var season models.Season
+	err := s.DB.Get(&season, `
+        SELECT * FROM seasons 
+        WHERE league_id = $1 AND year = $2
+    `, leagueID, year)
+	if err != nil {
+		return nil, err
+	}
+	return &season, nil
+}
+
+func (s *Store) UpsertRapidAPIMapping(mapping *models.APIMapping) error {
+	query := `
+        INSERT INTO api_mappings (api_name, api_id, entity_id, entity_type, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, NOW(), NOW())
+        ON CONFLICT (api_name, api_id, entity_id, entity_type)
+        DO NOTHING
+    `
+	_, err := s.DB.Exec(query,
+		mapping.APIName,
+		mapping.APIID,
+		mapping.EntityID,
+		mapping.EntityType,
+	)
+	return err
+}

@@ -7,6 +7,7 @@ import (
 	"rugby-live-api/db"
 	"rugby-live-api/models"
 	"rugby-live-api/services"
+	"rugby-live-api/services/rapidapi"
 	"strconv"
 	"time"
 
@@ -16,14 +17,14 @@ import (
 type Handler struct {
 	apiClient *services.APIClient
 	store     *db.Store
-	rugbyLive *services.RugbyLiveAPI
+	rapidAPI  *rapidapi.Client
 }
 
 func NewHandler(store *db.Store) *Handler {
 	return &Handler{
 		apiClient: services.NewAPIClient(),
 		store:     store,
-		rugbyLive: services.NewRugbyLiveAPI(),
+		rapidAPI:  rapidapi.NewClient(),
 	}
 }
 
@@ -372,10 +373,32 @@ func (h *Handler) GetMatchesByLeague(c *gin.Context) {
 }
 
 func (h *Handler) GetRugbyLiveCompetitions(c *gin.Context) {
-	competitions, err := h.rugbyLive.GetCompetitions()
+	mappings, err := h.rapidAPI.MapCompetitionsToLeagues(h.store)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch competitions: %v", err)})
 		return
 	}
-	c.JSON(http.StatusOK, competitions)
+
+	// Group results by match status
+	matched := make([]rapidapi.CompetitionMapping, 0)
+	unmatched := make([]rapidapi.CompetitionMapping, 0)
+
+	for _, mapping := range mappings {
+		if mapping.Matched {
+			matched = append(matched, mapping)
+		} else {
+			unmatched = append(unmatched, mapping)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"matched":   matched,
+		"unmatched": unmatched,
+		"stats": gin.H{
+			"total":      len(mappings),
+			"matched":    len(matched),
+			"unmatched":  len(unmatched),
+			"match_rate": float64(len(matched)) / float64(len(mappings)),
+		},
+	})
 }

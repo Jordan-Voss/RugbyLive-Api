@@ -75,7 +75,7 @@ func main() {
 	// API routes
 	api := router.Group("/api")
 	{
-		api.GET("/rugby-live/competitions", h.GetRugbyLiveCompetitions)
+		api.GET("/rapidapi/competitions", h.GetRugbyLiveCompetitions)
 	}
 
 	// Start server
